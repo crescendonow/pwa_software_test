@@ -1,0 +1,9 @@
+﻿.env
+.env.example
+nginx.conf
+.agents/
+db/
+note/
+.docs/
+scripts/
+

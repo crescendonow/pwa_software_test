@@ -1,0 +1,182 @@
+﻿<!doctype html>
+<html lang="th" class="scroll-smooth">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PWA GIS UAT</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          fontFamily: {
+            sans: ["Noto Sans Thai", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+          },
+          extend: {
+            colors: {
+              primary: { 50: "#eff6ff", 100: "#dbeafe", 500: "#3b82f6", 600: "#2563eb", 700: "#1d4ed8", 800: "#1e40af" },
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
+    <link rel="stylesheet" href="pwagis_uat.css" />
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/th.js" defer></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+    <script src="pwagis_uat.js" defer></script>
+  </head>
+  <body class="min-h-screen bg-slate-100 text-slate-800 antialiased transition-colors dark:bg-slate-900 dark:text-slate-200">
+    <header class="sticky top-0 z-40 border-b border-primary-800 bg-primary-700 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+      <div class="mx-auto flex max-w-[1680px] flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 text-white">
+            <i data-lucide="clipboard-check" class="h-6 w-6 text-sky-200"></i>
+            <h1 class="text-lg font-bold tracking-normal">PWA GIS UAT</h1>
+            <span id="health-badge" class="inline-flex items-center gap-2 rounded bg-white/10 px-2 py-1 text-xs text-sky-100">
+              <span class="h-2 w-2 rounded-full bg-slate-300"></span>
+              checking
+            </span>
+          </div>
+          <p id="current-session-label" class="mt-1 truncate text-sm text-sky-100">ยังไม่ได้เลือก session</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="refresh-button" class="icon-text-button border-white/20 bg-white/10 text-white hover:bg-white/20" type="button" title="Refresh">
+            <i data-lucide="refresh-cw" class="h-4 w-4"></i>
+            Refresh
+          </button>
+          <button id="export-button" class="icon-text-button border-white/20 bg-slate-950 text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50" type="button" title="Export CSV" disabled>
+            <i data-lucide="download" class="h-4 w-4"></i>
+            Export CSV
+          </button>
+          <a id="logout-link" class="icon-text-button border-white/20 bg-white/10 text-white hover:bg-white/20" href="logout" title="Logout">
+            <i data-lucide="log-out" class="h-4 w-4"></i>
+            Logout
+          </a>
+          <button id="theme-toggle" class="icon-button border-white/20 bg-white/10 text-white hover:bg-white/20" type="button" title="Toggle dark mode">
+            <i data-lucide="moon" class="h-4 w-4"></i>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-[1680px] px-4 py-4">
+      <section class="surface mb-4 p-4">
+        <form id="session-form" class="grid grid-cols-1 gap-3 lg:grid-cols-[220px_180px_minmax(220px,1fr)_auto] lg:items-end">
+          <label class="field-label">
+            เวอร์ชันทดสอบ
+            <select id="test-version" name="test_version" class="field-control" required></select>
+          </label>
+          <label class="field-label">
+            วันที่ทดสอบ
+            <input id="test-date" name="test_date" class="field-control thai-date" type="text" required readonly />
+          </label>
+          <label class="field-label">
+            ผู้ทดสอบ
+            <input id="tester-name" name="tester_name" class="field-control disabled-control" readonly placeholder="โหลดจาก session" />
+          </label>
+          <button id="create-session-button" class="icon-text-button h-10 border-primary-700 bg-primary-700 px-4 font-semibold text-white hover:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-50" type="submit" disabled>
+            <i data-lucide="plus" class="h-4 w-4"></i>
+            สร้าง session
+          </button>
+        </form>
+        <div id="session-meta" class="mt-3 grid gap-2 text-xs text-slate-600 dark:text-slate-300 sm:grid-cols-2 lg:grid-cols-4"></div>
+      </section>
+
+      <div class="mb-4 flex flex-wrap gap-2 border-b border-slate-300 dark:border-slate-700">
+        <button class="tab-button active" type="button" data-tab="workbench">บันทึกผลทดสอบ</button>
+        <button class="tab-button" type="button" data-tab="report">รายงาน</button>
+      </div>
+
+      <section id="workbench-panel" data-panel="workbench">
+        <div class="grid gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
+          <aside class="surface min-h-[240px] overflow-hidden">
+            <div class="flex h-12 items-center justify-between border-b border-slate-200 px-4 dark:border-slate-700">
+              <h2 class="text-sm font-semibold">Sessions</h2>
+              <span id="session-count" class="text-xs font-medium text-slate-500">0</span>
+            </div>
+            <div id="session-list" class="max-h-[calc(100vh-310px)] min-h-[180px] overflow-y-auto"></div>
+          </aside>
+
+          <section class="surface min-w-0 overflow-hidden">
+            <div class="grid gap-4 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div class="summary-card"><span>ทั้งหมด</span><strong id="summary-total">0</strong></div>
+                <div class="summary-card pass"><span>ได้</span><strong id="summary-passed">0</strong></div>
+                <div class="summary-card fail"><span>ไม่ได้</span><strong id="summary-failed">0</strong></div>
+                <div class="summary-card pending"><span>ยังไม่ระบุ</span><strong id="summary-pending">0</strong></div>
+              </div>
+              <div class="grid gap-2 sm:grid-cols-3">
+                <select id="layer-filter" class="field-control compact"><option value="">ทุกชั้นข้อมูล</option></select>
+                <select id="feature-filter" class="field-control compact"><option value="">ทุก feature changes</option></select>
+                <select id="action-filter" class="field-control compact"><option value="">ทุก action</option></select>
+              </div>
+            </div>
+            <div class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2 text-sm dark:border-slate-700">
+              <span id="save-state" class="text-slate-500 dark:text-slate-400">พร้อมใช้งาน</span>
+              <button id="clear-case-filters" class="text-sm font-medium text-primary-700 hover:text-primary-800 dark:text-sky-300" type="button">ล้างตัวกรอง</button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="min-w-[1180px] border-collapse text-sm">
+                <thead class="bg-slate-100 text-left text-xs font-semibold uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  <tr>
+                    <th class="w-[160px] px-3 py-3">ชั้นข้อมูล</th>
+                    <th class="w-[300px] px-3 py-3">สิ่งที่ต่างจากเวอร์ชันเดิม</th>
+                    <th class="w-[320px] px-3 py-3">หัวข้อการทดสอบ</th>
+                    <th class="w-[72px] px-3 py-3 text-center">ได้</th>
+                    <th class="w-[72px] px-3 py-3 text-center">ไม่ได้</th>
+                    <th class="min-w-[280px] px-3 py-3">หมายเหตุ</th>
+                  </tr>
+                </thead>
+                <tbody id="results-body" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="report-panel" class="hidden" data-panel="report">
+        <div class="surface overflow-hidden">
+          <div class="grid gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-700 lg:grid-cols-[180px_260px_auto] lg:items-end">
+            <label class="field-label">
+              รายเขต
+              <select id="report-area-filter" class="field-control"><option value="">ทุกเขต</option></select>
+            </label>
+            <label class="field-label">
+              ผู้ทดสอบ
+              <select id="report-tester-filter" class="field-control"><option value="">ทุกคน</option></select>
+            </label>
+            <button id="load-report-button" class="icon-text-button h-10 border-primary-700 bg-primary-700 px-4 font-semibold text-white hover:bg-primary-800" type="button">
+              <i data-lucide="search" class="h-4 w-4"></i>
+              ดูรายงาน
+            </button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="min-w-[1420px] border-collapse text-sm">
+              <thead class="bg-slate-100 text-left text-xs font-semibold uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                <tr>
+                  <th class="px-3 py-3">วันที่</th>
+                  <th class="px-3 py-3">เวอร์ชัน</th>
+                  <th class="px-3 py-3">ผู้ทดสอบ</th>
+                  <th class="px-3 py-3">เขต</th>
+                  <th class="px-3 py-3">รหัส กปภ.</th>
+                  <th class="px-3 py-3">ชั้นข้อมูล</th>
+                  <th class="px-3 py-3">หัวข้อ</th>
+                  <th class="px-3 py-3 text-center">ผล</th>
+                  <th class="px-3 py-3">หมายเหตุ</th>
+                </tr>
+              </thead>
+              <tbody id="report-body" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="pointer-events-none fixed bottom-4 right-4 hidden max-w-sm rounded border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-lg dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"></div>
+  </body>
+</html>

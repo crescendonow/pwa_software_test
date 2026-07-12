@@ -1,0 +1,189 @@
+﻿:root {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+.surface {
+  border: 1px solid rgb(226 232 240);
+  background: rgb(255 255 255);
+  border-radius: 8px;
+}
+
+.dark .surface {
+  border-color: rgb(51 65 85);
+  background: rgb(15 23 42);
+}
+
+.field-label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: rgb(51 65 85);
+}
+
+.dark .field-label {
+  color: rgb(203 213 225);
+}
+
+.field-control {
+  height: 2.5rem;
+  width: 100%;
+  border: 1px solid rgb(203 213 225);
+  border-radius: 6px;
+  background: rgb(255 255 255);
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  color: rgb(15 23 42);
+  outline: none;
+}
+
+.field-control.compact {
+  height: 2.25rem;
+}
+
+.field-control:focus {
+  border-color: rgb(37 99 235);
+  box-shadow: 0 0 0 3px rgb(219 234 254);
+}
+
+.dark .field-control {
+  border-color: rgb(71 85 105);
+  background: rgb(15 23 42);
+  color: rgb(226 232 240);
+}
+
+.dark .field-control:focus {
+  border-color: rgb(56 189 248);
+  box-shadow: 0 0 0 3px rgb(8 47 73);
+}
+
+.disabled-control {
+  background: rgb(248 250 252);
+  color: rgb(71 85 105);
+}
+
+.dark .disabled-control {
+  background: rgb(30 41 59);
+  color: rgb(203 213 225);
+}
+
+.icon-button,
+.icon-text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-width: 1px;
+  border-radius: 6px;
+  min-height: 2.5rem;
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+
+.icon-button {
+  width: 2.5rem;
+  padding: 0;
+}
+
+.tab-button {
+  border-bottom: 2px solid transparent;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: rgb(71 85 105);
+}
+
+.tab-button:hover {
+  color: rgb(29 78 216);
+}
+
+.tab-button.active {
+  border-color: rgb(37 99 235);
+  color: rgb(29 78 216);
+}
+
+.dark .tab-button {
+  color: rgb(203 213 225);
+}
+
+.dark .tab-button:hover,
+.dark .tab-button.active {
+  color: rgb(125 211 252);
+}
+
+.summary-card {
+  border: 1px solid rgb(226 232 240);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  background: rgb(248 250 252);
+}
+
+.summary-card span {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgb(100 116 139);
+}
+
+.summary-card strong {
+  display: block;
+  font-size: 1.125rem;
+  color: rgb(15 23 42);
+}
+
+.summary-card.pass {
+  border-color: rgb(167 243 208);
+  background: rgb(236 253 245);
+}
+
+.summary-card.fail {
+  border-color: rgb(254 205 211);
+  background: rgb(255 241 242);
+}
+
+.summary-card.pending {
+  border-color: rgb(253 230 138);
+  background: rgb(255 251 235);
+}
+
+.dark .summary-card {
+  border-color: rgb(51 65 85);
+  background: rgb(30 41 59);
+}
+
+.dark .summary-card strong {
+  color: rgb(248 250 252);
+}
+
+.dark .summary-card.pass {
+  border-color: rgb(6 95 70);
+  background: rgb(6 78 59 / 0.45);
+}
+
+.dark .summary-card.fail {
+  border-color: rgb(159 18 57);
+  background: rgb(136 19 55 / 0.35);
+}
+
+.dark .summary-card.pending {
+  border-color: rgb(146 64 14);
+  background: rgb(120 53 15 / 0.35);
+}
+
+.flatpickr-calendar {
+  font-family: "Noto Sans Thai", ui-sans-serif, system-ui, sans-serif;
+}
+
+@media (max-width: 640px) {
+  .tab-button {
+    flex: 1 1 auto;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+}

@@ -1,0 +1,266 @@
+﻿<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>เข้าสู่ระบบ - PWA GIS UAT</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #fafbfc;
+        --card: #ffffff;
+        --muted: #64748b;
+        --text: #0f172a;
+        --border: rgba(15, 23, 42, 0.12);
+        --blue: #3f74ca;
+        --blue-light: #78afe2;
+        --green: #3eba96;
+        --red: #f05b50;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        overflow: hidden;
+        font-family: "Noto Sans Thai", system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 18% 18%, rgba(120, 175, 226, 0.28), transparent 30%),
+          radial-gradient(circle at 82% 72%, rgba(62, 186, 150, 0.22), transparent 28%),
+          linear-gradient(135deg, #f8fafc 0%, #eef5ff 52%, #f7fffb 100%);
+      }
+      .page {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+      .login-container {
+        width: min(100%, 430px);
+        animation: rise 0.45s ease-out;
+      }
+      @keyframes rise {
+        from { opacity: 0; transform: translateY(18px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .login-header { text-align: center; margin-bottom: 28px; }
+      .logo-badge {
+        width: 88px;
+        height: 88px;
+        margin: 0 auto 18px;
+        border-radius: 22px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, var(--blue), var(--blue-light));
+        box-shadow: 0 16px 42px rgba(63, 116, 202, 0.24);
+        color: white;
+        font-size: 34px;
+        font-weight: 800;
+      }
+      h1 { margin: 0; font-size: 24px; line-height: 1.25; }
+      .subtitle { margin: 6px 0 0; color: var(--muted); font-size: 13px; font-weight: 500; }
+      .card {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 30px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 24px 70px rgba(15, 23, 42, 0.12);
+        backdrop-filter: blur(14px);
+      }
+      .card::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto;
+        height: 3px;
+        background: linear-gradient(270deg, #3eba96 -14%, #3f8fb6 42%, #3f74ca 67%);
+      }
+      .card-title {
+        margin-bottom: 22px;
+        font-size: 16px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .field { margin-bottom: 18px; }
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .input-wrap { position: relative; }
+      input {
+        width: 100%;
+        height: 44px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0 44px 0 14px;
+        background: #f8fafc;
+        color: var(--text);
+        font: inherit;
+        outline: none;
+        transition: 0.18s border-color, 0.18s box-shadow, 0.18s background;
+      }
+      input:focus {
+        background: white;
+        border-color: var(--blue-light);
+        box-shadow: 0 0 0 3px rgba(63, 116, 202, 0.12);
+      }
+      .toggle-pass {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 30px;
+        height: 30px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .error-msg {
+        display: none;
+        margin-bottom: 18px;
+        border: 1px solid rgba(240, 91, 80, 0.22);
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: rgba(240, 91, 80, 0.09);
+        color: var(--red);
+        font-size: 13px;
+      }
+      .error-msg.show { display: block; }
+      .btn-login {
+        width: 100%;
+        height: 46px;
+        border: 0;
+        border-radius: 10px;
+        background: linear-gradient(135deg, var(--blue), var(--blue-light));
+        color: white;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        transition: 0.18s transform, 0.18s box-shadow, 0.18s opacity;
+      }
+      .btn-login:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(63, 116, 202, 0.28); }
+      .btn-login:disabled { opacity: 0.7; cursor: wait; transform: none; }
+      .spinner {
+        display: none;
+        width: 18px;
+        height: 18px;
+        border: 2px solid rgba(255, 255, 255, 0.38);
+        border-top-color: white;
+        border-radius: 999px;
+        animation: spin 0.7s linear infinite;
+      }
+      .btn-login.loading .btn-text { display: none; }
+      .btn-login.loading .spinner { display: block; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .footer { margin-top: 18px; text-align: center; color: var(--muted); font-size: 11px; line-height: 1.6; }
+      .footer strong { color: var(--green); }
+      @media (max-width: 480px) {
+        .card { padding: 24px 20px; }
+        .logo-badge { width: 68px; height: 68px; border-radius: 18px; font-size: 26px; }
+        h1 { font-size: 21px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="login-container">
+        <header class="login-header">
+          <div class="logo-badge">UAT</div>
+          <h1>PWA GIS UAT</h1>
+          <p class="subtitle">เข้าสู่ระบบด้วยบัญชี PWA GIS Online Tracking</p>
+        </header>
+
+        <section class="card">
+          <div class="card-title">เข้าสู่ระบบ</div>
+          <div class="error-msg" id="errorMsg"><span id="errorText">ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง</span></div>
+          <form id="loginForm" autocomplete="off">
+            <div class="field">
+              <label for="username">ชื่อผู้ใช้</label>
+              <input id="username" name="username" type="text" inputmode="numeric" placeholder="กรอกรหัสพนักงาน" required autofocus />
+            </div>
+            <div class="field">
+              <label for="password">รหัสผ่าน</label>
+              <div class="input-wrap">
+                <input id="password" name="password" type="password" placeholder="กรอกรหัสผ่าน" required />
+                <button class="toggle-pass" type="button" id="togglePass" title="แสดง/ซ่อนรหัสผ่าน">👁</button>
+              </div>
+            </div>
+            <button type="submit" class="btn-login" id="btnLogin">
+              <span class="btn-text">เข้าสู่ระบบ</span>
+              <span class="spinner"></span>
+            </button>
+          </form>
+        </section>
+
+        <div class="footer">ระบบนี้ใช้สิทธิ์และ session จาก <strong>PWA GIS Online Tracking</strong></div>
+      </div>
+    </main>
+
+    <script>
+      function basePath() {
+        return window.location.pathname.replace(/\/(login|login\.html)\/?$/, "").replace(/\/$/, "");
+      }
+
+      function appURL(path) {
+        return `${basePath()}/${path.replace(/^\//, "")}`;
+      }
+
+      document.getElementById("togglePass").addEventListener("click", function () {
+        const input = document.getElementById("password");
+        input.type = input.type === "password" ? "text" : "password";
+      });
+
+      document.getElementById("loginForm").addEventListener("submit", async function (event) {
+        event.preventDefault();
+        const button = document.getElementById("btnLogin");
+        const errorBox = document.getElementById("errorMsg");
+        const errorText = document.getElementById("errorText");
+        errorBox.classList.remove("show");
+        button.classList.add("loading");
+        button.disabled = true;
+
+        try {
+          const response = await fetch(appURL("login"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: document.getElementById("username").value.trim(),
+              password: document.getElementById("password").value,
+            }),
+          });
+          const payload = await response.json();
+          if (response.ok && (payload.status === "success" || payload.result === "Found")) {
+            window.location.href = payload.redirect || appURL("pwagis_uat.html");
+            return;
+          }
+          errorText.textContent = payload.message || "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง";
+          errorBox.classList.add("show");
+        } catch (error) {
+          errorText.textContent = "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้";
+          errorBox.classList.add("show");
+        } finally {
+          button.classList.remove("loading");
+          button.disabled = false;
+        }
+      });
+
+      if (new URLSearchParams(window.location.search).get("error") === "1") {
+        document.getElementById("errorMsg").classList.add("show");
+      }
+    </script>
+  </body>
+</html>
+

@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: gisonline-uat-postgres
+    environment:
+      POSTGRES_DB: gisonline_uat
+      POSTGRES_USER: uat_user
+      POSTGRES_PASSWORD: uat_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./db/002_seed_from_excel.sql:/docker-entrypoint-initdb.d/002_seed_from_excel.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uat_user -d gisonline_uat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
