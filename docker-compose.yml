@@ -12,11 +12,24 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./db/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
       - ./db/002_seed_from_excel.sql:/docker-entrypoint-initdb.d/002_seed_from_excel.sql:ro
+      - ./db/003_multi_branch_sessions.sql:/docker-entrypoint-initdb.d/003_multi_branch_sessions.sql:ro
+      - ./db/004_seed_may2569.sql:/docker-entrypoint-initdb.d/004_seed_may2569.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U uat_user -d gisonline_uat"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  nlp:
+    # Development only. Native production services use NSSM and loopback.
+    build:
+      context: ./nlp
+    container_name: gisonline-uat-nlp
+    environment:
+      TOP_N_WORDS: "80"
+    ports:
+      - "127.0.0.1:5023:8000"
+    restart: unless-stopped
 
 volumes:
   postgres-data:

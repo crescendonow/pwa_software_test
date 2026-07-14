@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="th" class="scroll-smooth">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PWA GIS UAT Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          fontFamily: {
+            sans: ["Noto Sans Thai", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+          },
+          extend: {
+            colors: {
+              primary: { 50: "#eff6ff", 100: "#dbeafe", 500: "#3b82f6", 600: "#2563eb", 700: "#1d4ed8", 800: "#1e40af" },
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
+    <link rel="stylesheet" href="pwagis_uat.css" />
+    <link rel="stylesheet" href="dashboard_uat.css" />
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/th.js" defer></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/wordcloud@1/src/wordcloud2.js" defer></script>
+    <script src="shared.js"></script>
+    <script src="dashboard_uat.js" defer></script>
+  </head>
+  <body class="min-h-screen bg-slate-100 text-slate-800 antialiased transition-colors dark:bg-slate-900 dark:text-slate-200">
+    <header class="sticky top-0 z-40 border-b border-primary-800 bg-primary-700 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+      <div class="mx-auto flex max-w-[1680px] flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 text-white">
+            <i data-lucide="bar-chart-3" class="h-6 w-6 text-sky-200"></i>
+            <h1 class="text-lg font-bold tracking-normal">PWA GIS UAT Dashboard</h1>
+            <span id="health-badge" class="inline-flex items-center gap-2 rounded bg-white/10 px-2 py-1 text-xs text-sky-100">
+              <span class="h-2 w-2 rounded-full bg-slate-300"></span>
+              checking
+            </span>
+          </div>
+          <p id="updated-label" class="mt-1 truncate text-sm text-sky-100">ยังไม่ได้อัปเดต</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="poll-toggle" class="icon-text-button border-white/20 bg-white/10 text-white hover:bg-white/20" type="button" title="หยุด/เริ่ม realtime">
+            <i data-lucide="pause" class="h-4 w-4"></i>
+            <span id="poll-toggle-label">Realtime: ON</span>
+          </button>
+          <button id="refresh-button" class="icon-text-button border-white/20 bg-white/10 text-white hover:bg-white/20" type="button" title="Refresh">
+            <i data-lucide="refresh-cw" class="h-4 w-4"></i>
+            Refresh
+          </button>
+          <a id="workbench-link" class="icon-text-button border-white/20 bg-white/10 text-white hover:bg-white/20" href="pwagis_uat.html" title="Workbench">
+            <i data-lucide="clipboard-check" class="h-4 w-4"></i>
+            Workbench
+          </a>
+          <a id="logout-link" class="icon-text-button border-white/20 bg-white/10 text-white hover:bg-white/20" href="logout" title="Logout">
+            <i data-lucide="log-out" class="h-4 w-4"></i>
+            Logout
+          </a>
+          <button id="theme-toggle" class="icon-button border-white/20 bg-white/10 text-white hover:bg-white/20" type="button" title="Toggle dark mode">
+            <i data-lucide="moon" class="h-4 w-4"></i>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-[1680px] px-4 py-4">
+      <section class="surface mb-4 p-4">
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
+          <label class="field-label">
+            เวอร์ชันทดสอบ
+            <select id="filter-version" class="field-control"><option value="">ทุกเวอร์ชัน</option></select>
+          </label>
+          <label class="field-label">
+            หมวดทดสอบ
+            <select id="filter-suite" class="field-control"><option value="">ทุกหมวด</option></select>
+          </label>
+          <label class="field-label">
+            เขต
+            <select id="filter-area" class="field-control"><option value="">ทุกเขต</option></select>
+          </label>
+          <label class="field-label">
+            ตั้งแต่วันที่
+            <input id="filter-date-from" class="field-control thai-date" type="text" placeholder="ทุกวันที่" readonly />
+          </label>
+          <label class="field-label">
+            ถึงวันที่
+            <input id="filter-date-to" class="field-control thai-date" type="text" placeholder="ทุกวันที่" readonly />
+          </label>
+        </div>
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <button id="apply-filters-button" class="icon-text-button h-10 border-primary-700 bg-primary-700 px-4 font-semibold text-white hover:bg-primary-800" type="button">
+            <i data-lucide="filter" class="h-4 w-4"></i>
+            กรองข้อมูล
+          </button>
+          <label class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+            รีเฟรชทุก
+            <select id="poll-interval" class="field-control compact w-24">
+              <option value="10">10 วิ</option>
+              <option value="20" selected>20 วิ</option>
+              <option value="30">30 วิ</option>
+              <option value="60">60 วิ</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <div class="summary-card"><span>ทั้งหมด</span><strong id="summary-total">0</strong></div>
+        <div class="summary-card pass"><span>ได้</span><strong id="summary-passed">0</strong></div>
+        <div class="summary-card fail"><span>ไม่ได้</span><strong id="summary-failed">0</strong></div>
+        <div class="summary-card pending"><span>ยังไม่ระบุ</span><strong id="summary-pending">0</strong></div>
+        <div class="summary-card"><span>% ผ่าน</span><strong id="summary-percent">0%</strong></div>
+      </section>
+
+      <div class="grid gap-4 xl:grid-cols-2">
+        <section class="surface p-4">
+          <h2 class="mb-3 flex items-center gap-2 text-sm font-semibold">
+            <i data-lucide="layers" class="h-4 w-4"></i>
+            สรุปตามชั้นข้อมูล
+          </h2>
+          <div id="layer-breakdown" class="flex flex-col gap-3"></div>
+        </section>
+
+        <section class="surface p-4">
+          <h2 class="mb-3 flex items-center gap-2 text-sm font-semibold">
+            <i data-lucide="list-checks" class="h-4 w-4"></i>
+            สรุปตามหมวดทดสอบ
+          </h2>
+          <div id="suite-breakdown" class="flex flex-col gap-3"></div>
+        </section>
+      </div>
+
+      <section class="surface mt-4 p-4">
+        <h2 class="mb-3 flex items-center gap-2 text-sm font-semibold">
+          <i data-lucide="message-square-text" class="h-4 w-4"></i>
+          Word cloud จากหมายเหตุ
+        </h2>
+        <div id="wordcloud-empty" class="hidden py-10 text-center text-sm text-slate-500">ยังไม่มีหมายเหตุ หรือบริการ NLP ยังไม่พร้อมใช้งาน</div>
+        <canvas id="wordcloud-canvas" width="1200" height="360" class="w-full max-w-full"></canvas>
+      </section>
+      <section class="surface mt-4 p-4" aria-labelledby="free-text-query-title">
+        <div class="mb-3 flex items-center justify-between gap-3">
+          <h2 id="free-text-query-title" class="flex items-center gap-2 text-sm font-semibold">
+            <i data-lucide="message-circle-question" class="h-4 w-4"></i>
+            ถามข้อมูล UAT ด้วยภาษาไทย
+          </h2>
+          <span id="free-text-query-status" class="text-xs text-slate-500 dark:text-slate-400"></span>
+        </div>
+        <form id="free-text-query-form" class="flex flex-col gap-2 sm:flex-row">
+          <label class="sr-only" for="free-text-query-input">คำถามภาษาไทย</label>
+          <textarea id="free-text-query-input" maxlength="500" rows="2" class="field-control min-h-12 flex-1 resize-y" placeholder="เช่น ผลการทดสอบที่ไม่ผ่านมีจำนวนเท่าไร"></textarea>
+          <div class="flex items-end gap-2 sm:flex-col sm:items-stretch">
+            <span id="free-text-query-count" class="text-right text-xs text-slate-500 dark:text-slate-400">0/500</span>
+            <button id="free-text-query-button" class="icon-text-button h-10 border-primary-700 bg-primary-700 px-4 font-semibold text-white hover:bg-primary-800 disabled:cursor-wait disabled:opacity-60" type="submit">
+              <i data-lucide="send" class="h-4 w-4"></i>
+              ถาม
+            </button>
+          </div>
+        </form>
+        <div id="free-text-query-output" class="mt-4 min-h-8"></div>
+      </section>
+    </main>
+
+    <div id="toast" class="pointer-events-none fixed bottom-4 right-4 hidden max-w-sm rounded border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-lg dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"></div>
+    <script src="freetext_query.js" defer></script>
+  </body>
+</html>

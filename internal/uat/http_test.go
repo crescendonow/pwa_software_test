@@ -119,6 +119,42 @@ func TestSessionInfoProxyForwardsCookieAndReturnsInfo(t *testing.T) {
 	}
 }
 
+// TestRequireAuthenticationNeverLocksOutReturningUser guards against the
+// regression where requireAuthentication checked an in-memory "expired(uid)"
+// timestamp *before* refreshing it via touchActivity. Once a user crossed the
+// inactivityLimit, the stale timestamp was never updated (the request was
+// rejected before reaching touchActivity), permanently locking the user out
+// until the process restarted -- even though the upstream pwa_gis_tracking
+// session was still valid. The fix removes that in-memory state entirely and
+// defers fully to the upstream session; a valid upstream session must always
+// be accepted, however many requests (and however much real time) has passed.
+func TestRequireAuthenticationNeverLocksOutReturningUser(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","uid":"14180","uname":"Tester One","pwa_code":"1020","area":"3"}`))
+	}))
+	defer upstream.Close()
+
+	store := &fakeStore{}
+	handler := NewHandlerWithConfig(store, fstest.MapFS{"index.html": {Data: []byte("ok")}}, HandlerConfig{SessionInfoURL: upstream.URL})
+
+	// Simulate the user returning many times "later" (in the old code this
+	// would eventually fail once the in-memory activity timestamp aged past
+	// inactivityLimit); every call must succeed since there is no longer any
+	// server-side inactivity timer to expire.
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/references", nil)
+		req.Header.Set("Cookie", "session_id=abc")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("call %d: expected 200 for a user with a valid upstream session, got %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestPatchResultEndpointRejectsMutuallyExclusiveOutcome(t *testing.T) {
 	store := &fakeStore{}
 	handler := NewHandler(store, fstest.MapFS{"index.html": {Data: []byte("ok")}})
@@ -154,12 +190,182 @@ func TestGetSessionResultsReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestDashboardWordcloudEndpointReturnsNLPWords(t *testing.T) {
+	store := &fakeStore{comments: []string{`comment one`, `comment one`}}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf(`expected POST, got %s`, r.Method)
+		}
+		if r.URL.Path != `/wordcloud` {
+			t.Fatalf(`expected /wordcloud, got %s`, r.URL.Path)
+		}
+
+		var payload struct {
+			Comments []string
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Comments) != 2 || payload.Comments[0] != `comment one` {
+			t.Fatalf(`expected comments to be forwarded, got %#v`, payload.Comments)
+		}
+
+		w.Header().Set(`Content-Type`, `application/json`)
+		if err := json.NewEncoder(w).Encode([]WordCloudItem{{Word: `system`, Weight: 2}}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer upstream.Close()
+
+	handler := NewHandlerWithConfig(store, fstest.MapFS{`index.html`: {Data: []byte(`ok`)}}, HandlerConfig{
+		NLPURL: upstream.URL + `/wordcloud`,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, `/api/dashboard/wordcloud`, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf(`expected 200, got %d: %s`, rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Words []WordCloudItem
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Words) != 1 || payload.Words[0] != (WordCloudItem{Word: `system`, Weight: 2}) {
+		t.Fatalf(`expected NLP words in response, got %#v`, payload.Words)
+	}
+}
+
+func TestDashboardWordcloudEndpointReturnsBadGatewayWhenNLPIsUnreachable(t *testing.T) {
+	store := &fakeStore{comments: []string{`comment one`}}
+	handler := NewHandlerWithConfig(store, fstest.MapFS{`index.html`: {Data: []byte(`ok`)}}, HandlerConfig{
+		NLPURL:     `http://nlp.internal/wordcloud`,
+		HTTPClient: &http.Client{Transport: unreachableRoundTripper{}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, `/api/dashboard/wordcloud`, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf(`expected 502, got %d: %s`, rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `could not reach nlp service`) {
+		t.Fatalf(`expected unreachable NLP error, got %s`, rec.Body.String())
+	}
+}
+
+func TestFreeTextQueryEndpointForwardsAuthenticatedActorAndHidesSQL(t *testing.T) {
+	session := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Cookie") != "session_id=abc" {
+			t.Fatalf("expected session cookie, got %q", r.Header.Get("Cookie"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"uid":"14180","uname":"Tester One"}`))
+	}))
+	defer session.Close()
+
+	query := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Prompt string `json:"prompt"`
+			Actor  struct {
+				UID   string `json:"uid"`
+				UName string `json:"uname"`
+			} `json:"actor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Prompt != "สรุปผล" || payload.Actor.UID != "14180" || payload.Actor.UName != "Tester One" {
+			t.Fatalf("unexpected free-text payload: %#v", payload)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","answer":"พบ 1 รายการ","columns":["total"],"rows":[{"total":1}],"row_count":1,"truncated":false}`))
+	}))
+	defer query.Close()
+
+	handler := NewHandlerWithConfig(&fakeStore{}, fstest.MapFS{"index.html": {Data: []byte("ok")}}, HandlerConfig{
+		SessionInfoURL:   session.URL,
+		FreeTextQueryURL: query.URL + "/query",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/freetext-query", strings.NewReader(`{"prompt":"สรุปผล"}`))
+	req.Header.Set("Cookie", "session_id=abc")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "SELECT") {
+		t.Fatalf("generated SQL must not reach browser: %s", rec.Body.String())
+	}
+}
+
+func TestFreeTextQueryEndpointRejectsUnauthenticatedRequest(t *testing.T) {
+	session := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer session.Close()
+
+	called := false
+	query := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
+	defer query.Close()
+
+	handler := NewHandlerWithConfig(&fakeStore{}, fstest.MapFS{"index.html": {Data: []byte("ok")}}, HandlerConfig{
+		SessionInfoURL:   session.URL,
+		FreeTextQueryURL: query.URL,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/freetext-query", strings.NewReader(`{"prompt":"สรุปผล"}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized || called {
+		t.Fatalf("expected unauthenticated request to stop at Go auth, got %d (called=%v)", rec.Code, called)
+	}
+}
+
+func TestFreeTextQueryEndpointRejectsSessionWithoutUID(t *testing.T) {
+	session := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"uname":"Tester One"}`))
+	}))
+	defer session.Close()
+
+	called := false
+	query := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
+	defer query.Close()
+
+	handler := NewHandlerWithConfig(&fakeStore{}, fstest.MapFS{"index.html": {Data: []byte("ok")}}, HandlerConfig{
+		SessionInfoURL:   session.URL,
+		FreeTextQueryURL: query.URL,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/freetext-query", strings.NewReader(`{"prompt":"เธชเธฃเธธเธเธเธฅ"}`))
+	req.Header.Set("Cookie", "session_id=abc")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized || called {
+		t.Fatalf("expected missing UID to stop at Go auth, got %d (called=%v)", rec.Code, called)
+	}
+}
+
+type unreachableRoundTripper struct{}
+
+func (unreachableRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New(`connection refused`)
+}
+
 type fakeStore struct {
-	createdSession Session
-	createdInput   CreateSessionInput
-	createCalled   bool
-	updateCalled   bool
-	getResultsErr  error
+	createdSession  Session
+	createdInput    CreateSessionInput
+	createCalled    bool
+	updateCalled    bool
+	getResultsErr   error
+	comments        []string
+	listCommentsErr error
 }
 
 func (f *fakeStore) Health(ctx context.Context) error {
@@ -203,6 +409,14 @@ func (f *fakeStore) UpdateResult(ctx context.Context, resultID int64, input Upda
 
 func (f *fakeStore) Report(ctx context.Context, filters ReportFilters) ([]ReportRow, error) {
 	return nil, nil
+}
+
+func (f *fakeStore) DashboardSummary(ctx context.Context, filters DashboardFilters) (DashboardSummary, error) {
+	return DashboardSummary{}, nil
+}
+
+func (f *fakeStore) ListComments(ctx context.Context, filters DashboardFilters) ([]string, error) {
+	return f.comments, f.listCommentsErr
 }
 
 func (f *fakeStore) Close() {}

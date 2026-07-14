@@ -8,6 +8,7 @@ type Session struct {
 	TesterName  string    `json:"tester_name"`
 	UID         string    `json:"uid"`
 	PwaCode     string    `json:"pwa_code"`
+	BranchName  string    `json:"branch_name"`
 	Area        string    `json:"area"`
 	JobName     string    `json:"job_name"`
 	Division    string    `json:"division"`
@@ -97,16 +98,34 @@ type ReportFilters struct {
 }
 
 type CreateSessionInput struct {
-	TestVersion string `json:"test_version"`
-	TesterName  string `json:"tester_name"`
-	UID         string `json:"uid"`
-	PwaCode     string `json:"pwa_code"`
-	Area        string `json:"area"`
-	JobName     string `json:"job_name"`
-	Division    string `json:"division"`
-	Institution string `json:"institution"`
-	Position    string `json:"position"`
-	TestDate    string `json:"test_date"`
+	TestVersion string        `json:"test_version"`
+	TesterName  string        `json:"tester_name"`
+	UID         string        `json:"uid"`
+	PwaCode     string        `json:"pwa_code"`
+	BranchName  string        `json:"branch_name"`
+	Area        string        `json:"area"`
+	JobName     string        `json:"job_name"`
+	Division    string        `json:"division"`
+	Institution string        `json:"institution"`
+	Position    string        `json:"position"`
+	TestDate    string        `json:"test_date"`
+	Branches    []BranchInput `json:"branches,omitempty"`
+}
+
+// BranchInput represents one selected pwa_code/branch to create a session for
+// when a tester chooses to run UAT against multiple branches at once.
+type BranchInput struct {
+	PwaCode string `json:"pwa_code"`
+	Name    string `json:"name"`
+	Zone    string `json:"zone"`
+}
+
+// OfficeInfo mirrors the pwa_gis_tracking office proxy shape used to populate
+// the multi-branch picker on the create-session form.
+type OfficeInfo struct {
+	PwaCode string `json:"pwa_code"`
+	Name    string `json:"name"`
+	Zone    string `json:"zone"`
 }
 
 type UpdateResultInput struct {
@@ -123,6 +142,7 @@ type ReportRow struct {
 	SortOrder      int    `json:"sort_order"`
 	TestDate       string `json:"test_date"`
 	TestVersion    string `json:"test_version"`
+	TestSuite      string `json:"test_suite"`
 	TesterName     string `json:"tester_name"`
 	UID            string `json:"uid"`
 	PwaCode        string `json:"pwa_code"`
@@ -138,6 +158,57 @@ type ReportRow struct {
 	IsPassed       bool   `json:"is_passed"`
 	IsFailed       bool   `json:"is_failed"`
 	Comment        string `json:"comment"`
+}
+
+// DashboardFilters narrows the aggregate dashboard summary / word cloud data.
+type DashboardFilters struct {
+	Area        string
+	TestVersion string
+	TestSuite   string
+	DateFrom    string
+	DateTo      string
+}
+
+// DashboardSummary aggregates pass/fail/pending counts overall and grouped by
+// layer_name / test_suite for the realtime dashboard.
+type DashboardSummary struct {
+	Total         int                  `json:"total"`
+	Passed        int                  `json:"passed"`
+	Failed        int                  `json:"failed"`
+	Pending       int                  `json:"pending"`
+	PercentPassed float64              `json:"percent_passed"`
+	ByLayer       []DashboardBreakdown `json:"by_layer"`
+	BySuite       []DashboardBreakdown `json:"by_suite"`
+	GeneratedAt   time.Time            `json:"generated_at"`
+}
+
+// DashboardBreakdown is one row of a group-by aggregate (layer or suite).
+type DashboardBreakdown struct {
+	Key           string  `json:"key"`
+	Total         int     `json:"total"`
+	Passed        int     `json:"passed"`
+	Failed        int     `json:"failed"`
+	Pending       int     `json:"pending"`
+	PercentPassed float64 `json:"percent_passed"`
+}
+
+// WordCloudItem is one token/weight pair returned by the NLP microservice.
+type WordCloudItem struct {
+	Word   string `json:"word"`
+	Weight int    `json:"weight"`
+}
+
+type FreeTextQueryInput struct {
+	Prompt string `json:"prompt"`
+}
+
+type FreeTextQueryResponse struct {
+	Status    string           `json:"status"`
+	Answer    string           `json:"answer"`
+	Columns   []string         `json:"columns"`
+	Rows      []map[string]any `json:"rows"`
+	RowCount  int              `json:"row_count"`
+	Truncated bool             `json:"truncated"`
 }
 
 func summarize(results []Result) Summary {

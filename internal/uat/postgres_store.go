@@ -3,6 +3,8 @@ package uat
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,6 +38,15 @@ func (p *PostgresStore) ListReferences(ctx context.Context) (ReferenceData, erro
 	var refs ReferenceData
 	var err error
 	refs.TestVersions, err = p.listText(ctx, `SELECT test_version_name FROM ut_logs.ref_test_version ORDER BY tv_id`)
+	if err != nil {
+		return ReferenceData{}, err
+	}
+	refs.TestSuites, err = p.listText(ctx, `
+		SELECT test_suite FROM ut_logs.test_cases
+		WHERE test_suite <> ''
+		GROUP BY test_suite
+		ORDER BY MIN(sort_order)
+	`)
 	if err != nil {
 		return ReferenceData{}, err
 	}
@@ -73,13 +84,13 @@ func (p *PostgresStore) listText(ctx context.Context, sql string) ([]string, err
 }
 
 func (p *PostgresStore) ListTestCases(ctx context.Context, testSuite string) ([]TestCase, error) {
-	_ = testSuite
 	rows, err := p.db.Query(ctx, `
-		SELECT id, test_version, layer_name, feature_changes, case_group, test_action, sort_order, is_active
+		SELECT id, test_version, test_suite, layer_name, feature_changes, case_group, test_action, sort_order, is_active
 		FROM ut_logs.test_cases
 		WHERE is_active = TRUE
+		  AND ($1 = '' OR test_suite = $1)
 		ORDER BY test_version, sort_order, id
-	`)
+	`, testSuite)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +102,7 @@ func (p *PostgresStore) ListTestCases(ctx context.Context, testSuite string) ([]
 		if err := rows.Scan(
 			&testCase.ID,
 			&testCase.TestVersion,
+			&testCase.TestSuite,
 			&testCase.LayerName,
 			&testCase.FeatureChanges,
 			&testCase.CaseGroup,
@@ -107,13 +119,16 @@ func (p *PostgresStore) ListTestCases(ctx context.Context, testSuite string) ([]
 
 func (p *PostgresStore) ListSessions(ctx context.Context, filters SessionFilters) ([]Session, error) {
 	rows, err := p.db.Query(ctx, `
-		SELECT id, test_version, tester_name, uid, pwa_code, area, job_name, division, institution, position,
+		SELECT id, test_version, tester_name, uid, pwa_code, branch_name, area, job_name, division, institution, position,
 			test_date::text, created_at, updated_at
 		FROM ut_logs.test_sessions
 		WHERE ($1 = '' OR area = $1)
 		  AND ($2 = '' OR tester_name = $2)
+		  AND ($3 = '' OR test_version = $3)
+		  AND ($4::date IS NULL OR test_date >= $4::date)
+		  AND ($5::date IS NULL OR test_date <= $5::date)
 		ORDER BY test_date DESC, id DESC
-	`, filters.Area, filters.TesterName)
+	`, filters.Area, filters.TesterName, filters.TestVersion, nullableDate(filters.DateFrom), nullableDate(filters.DateTo))
 	if err != nil {
 		return nil, err
 	}
@@ -140,26 +155,27 @@ func (p *PostgresStore) CreateSession(ctx context.Context, input CreateSessionIn
 	var session Session
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO ut_logs.test_sessions (
-			test_version, tester_name, uid, pwa_code, area, job_name, division, institution, position, test_date
+			test_version, tester_name, uid, pwa_code, branch_name, area, job_name, division, institution, position, test_date
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date)
-		ON CONFLICT (test_version, tester_name, test_date) DO UPDATE SET
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date)
+		ON CONFLICT (test_version, tester_name, test_date, pwa_code) DO UPDATE SET
 			uid = EXCLUDED.uid,
-			pwa_code = EXCLUDED.pwa_code,
+			branch_name = EXCLUDED.branch_name,
 			area = EXCLUDED.area,
 			job_name = EXCLUDED.job_name,
 			division = EXCLUDED.division,
 			institution = EXCLUDED.institution,
 			position = EXCLUDED.position,
 			updated_at = CURRENT_TIMESTAMP
-		RETURNING id, test_version, tester_name, uid, pwa_code, area, job_name, division, institution, position,
+		RETURNING id, test_version, tester_name, uid, pwa_code, branch_name, area, job_name, division, institution, position,
 			test_date::text, created_at, updated_at
-	`, input.TestVersion, input.TesterName, input.UID, input.PwaCode, input.Area, input.JobName, input.Division, input.Institution, input.Position, input.TestDate).Scan(
+	`, input.TestVersion, input.TesterName, input.UID, input.PwaCode, input.BranchName, input.Area, input.JobName, input.Division, input.Institution, input.Position, input.TestDate).Scan(
 		&session.ID,
 		&session.TestVersion,
 		&session.TesterName,
 		&session.UID,
 		&session.PwaCode,
+		&session.BranchName,
 		&session.Area,
 		&session.JobName,
 		&session.Division,
@@ -202,7 +218,7 @@ func (p *PostgresStore) GetSessionResults(ctx context.Context, sessionID int64) 
 	rows, err := p.db.Query(ctx, `
 		SELECT
 			r.id, r.session_id, r.test_case_id, r.is_passed, r.is_failed, r.comment, r.created_at, r.updated_at,
-			tc.id, tc.test_version, tc.layer_name, tc.feature_changes, tc.case_group, tc.test_action, tc.sort_order, tc.is_active
+			tc.id, tc.test_version, tc.test_suite, tc.layer_name, tc.feature_changes, tc.case_group, tc.test_action, tc.sort_order, tc.is_active
 		FROM ut_logs.test_results r
 		JOIN ut_logs.test_cases tc ON tc.id = r.test_case_id
 		WHERE r.session_id = $1
@@ -227,6 +243,7 @@ func (p *PostgresStore) GetSessionResults(ctx context.Context, sessionID int64) 
 			&result.UpdatedAt,
 			&result.TestCase.ID,
 			&result.TestCase.TestVersion,
+			&result.TestCase.TestSuite,
 			&result.TestCase.LayerName,
 			&result.TestCase.FeatureChanges,
 			&result.TestCase.CaseGroup,
@@ -280,15 +297,20 @@ func (p *PostgresStore) UpdateResult(ctx context.Context, resultID int64, input 
 func (p *PostgresStore) Report(ctx context.Context, filters ReportFilters) ([]ReportRow, error) {
 	rows, err := p.db.Query(ctx, `
 		SELECT
-			session_id, result_id, test_case_id, sort_order, test_date::text, test_version, tester_name,
+			session_id, result_id, test_case_id, sort_order, test_date::text, test_version, test_suite, tester_name,
 			uid, pwa_code, area, job_name, division, institution, position,
 			layer_name, feature_changes, case_group, test_action, is_passed, is_failed, comment
 		FROM ut_logs.v_uat_report
 		WHERE ($1::bigint = 0 OR session_id = $1)
 		  AND ($2 = '' OR area = $2)
 		  AND ($3 = '' OR tester_name = $3)
+		  AND ($4 = '' OR test_version = $4)
+		  AND ($5 = '' OR test_suite = $5)
+		  AND ($6::date IS NULL OR test_date >= $6::date)
+		  AND ($7::date IS NULL OR test_date <= $7::date)
 		ORDER BY test_date DESC, session_id DESC, sort_order, test_case_id
-	`, filters.SessionID, filters.Area, filters.TesterName)
+	`, filters.SessionID, filters.Area, filters.TesterName, filters.TestVersion, filters.TestSuite,
+		nullableDate(filters.DateFrom), nullableDate(filters.DateTo))
 	if err != nil {
 		return nil, err
 	}
@@ -304,6 +326,7 @@ func (p *PostgresStore) Report(ctx context.Context, filters ReportFilters) ([]Re
 			&row.SortOrder,
 			&row.TestDate,
 			&row.TestVersion,
+			&row.TestSuite,
 			&row.TesterName,
 			&row.UID,
 			&row.PwaCode,
@@ -327,10 +350,20 @@ func (p *PostgresStore) Report(ctx context.Context, filters ReportFilters) ([]Re
 	return report, rows.Err()
 }
 
+// nullableDate converts an empty date filter into SQL NULL so that
+// "$n::date IS NULL OR ..." filter clauses treat "no filter" correctly;
+// a non-empty value is passed through and cast to date by the query itself.
+func nullableDate(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
 func (p *PostgresStore) getSession(ctx context.Context, sessionID int64) (Session, error) {
 	var session Session
 	err := p.db.QueryRow(ctx, `
-		SELECT id, test_version, tester_name, uid, pwa_code, area, job_name, division, institution, position,
+		SELECT id, test_version, tester_name, uid, pwa_code, branch_name, area, job_name, division, institution, position,
 			test_date::text, created_at, updated_at
 		FROM ut_logs.test_sessions
 		WHERE id = $1
@@ -340,6 +373,7 @@ func (p *PostgresStore) getSession(ctx context.Context, sessionID int64) (Sessio
 		&session.TesterName,
 		&session.UID,
 		&session.PwaCode,
+		&session.BranchName,
 		&session.Area,
 		&session.JobName,
 		&session.Division,
@@ -381,6 +415,7 @@ func scanSession(scanner sessionScanner, session *Session) error {
 		&session.TesterName,
 		&session.UID,
 		&session.PwaCode,
+		&session.BranchName,
 		&session.Area,
 		&session.JobName,
 		&session.Division,
@@ -406,4 +441,112 @@ func (p *PostgresStore) DeleteSession(ctx context.Context, sessionID int64, uid 
 	}
 	_, err = p.db.Exec(ctx, `DELETE FROM ut_logs.test_sessions WHERE id=$1`, sessionID)
 	return err
+}
+
+func (p *PostgresStore) DashboardSummary(ctx context.Context, filters DashboardFilters) (DashboardSummary, error) {
+	summary := DashboardSummary{GeneratedAt: time.Now()}
+
+	err := p.db.QueryRow(ctx, `
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN is_passed THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN is_failed THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN NOT is_passed AND NOT is_failed THEN 1 ELSE 0 END), 0)
+		FROM ut_logs.v_uat_report
+		WHERE ($1 = '' OR area = $1)
+		  AND ($2 = '' OR test_version = $2)
+		  AND ($3 = '' OR test_suite = $3)
+		  AND ($4::date IS NULL OR test_date >= $4::date)
+		  AND ($5::date IS NULL OR test_date <= $5::date)
+	`, filters.Area, filters.TestVersion, filters.TestSuite, nullableDate(filters.DateFrom), nullableDate(filters.DateTo)).
+		Scan(&summary.Total, &summary.Passed, &summary.Failed, &summary.Pending)
+	if err != nil {
+		return DashboardSummary{}, err
+	}
+	summary.PercentPassed = percentOf(summary.Passed, summary.Total)
+
+	summary.ByLayer, err = p.dashboardBreakdown(ctx, "layer_name", filters)
+	if err != nil {
+		return DashboardSummary{}, err
+	}
+	summary.BySuite, err = p.dashboardBreakdown(ctx, "test_suite", filters)
+	if err != nil {
+		return DashboardSummary{}, err
+	}
+	return summary, nil
+}
+
+// dashboardBreakdown groups v_uat_report by the given column name (must be a
+// trusted, hard-coded identifier -- never derived from user input).
+func (p *PostgresStore) dashboardBreakdown(ctx context.Context, column string, filters DashboardFilters) ([]DashboardBreakdown, error) {
+	if column != "layer_name" && column != "test_suite" {
+		return nil, errors.New("unsupported breakdown column")
+	}
+	rows, err := p.db.Query(ctx, `
+		SELECT
+			`+column+` AS key,
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN is_passed THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN is_failed THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN NOT is_passed AND NOT is_failed THEN 1 ELSE 0 END), 0)
+		FROM ut_logs.v_uat_report
+		WHERE ($1 = '' OR area = $1)
+		  AND ($2 = '' OR test_version = $2)
+		  AND ($3 = '' OR test_suite = $3)
+		  AND ($4::date IS NULL OR test_date >= $4::date)
+		  AND ($5::date IS NULL OR test_date <= $5::date)
+		  AND `+column+` <> ''
+		GROUP BY `+column+`
+		ORDER BY `+column+`
+	`, filters.Area, filters.TestVersion, filters.TestSuite, nullableDate(filters.DateFrom), nullableDate(filters.DateTo))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	breakdown := []DashboardBreakdown{}
+	for rows.Next() {
+		var row DashboardBreakdown
+		if err := rows.Scan(&row.Key, &row.Total, &row.Passed, &row.Failed, &row.Pending); err != nil {
+			return nil, err
+		}
+		row.PercentPassed = percentOf(row.Passed, row.Total)
+		breakdown = append(breakdown, row)
+	}
+	return breakdown, rows.Err()
+}
+
+func (p *PostgresStore) ListComments(ctx context.Context, filters DashboardFilters) ([]string, error) {
+	rows, err := p.db.Query(ctx, `
+		SELECT comment
+		FROM ut_logs.v_uat_report
+		WHERE comment <> ''
+		  AND ($1 = '' OR area = $1)
+		  AND ($2 = '' OR test_version = $2)
+		  AND ($3 = '' OR test_suite = $3)
+		  AND ($4::date IS NULL OR test_date >= $4::date)
+		  AND ($5::date IS NULL OR test_date <= $5::date)
+		ORDER BY session_id DESC, sort_order
+	`, filters.Area, filters.TestVersion, filters.TestSuite, nullableDate(filters.DateFrom), nullableDate(filters.DateTo))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	comments := []string{}
+	for rows.Next() {
+		var comment string
+		if err := rows.Scan(&comment); err != nil {
+			return nil, err
+		}
+		comments = append(comments, comment)
+	}
+	return comments, rows.Err()
+}
+
+func percentOf(part, total int) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(part) / float64(total) * 100
 }

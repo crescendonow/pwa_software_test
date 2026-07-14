@@ -1,0 +1,6 @@
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+pythainlp>=4.0,<6.0
+wordcloud>=1.9,<2.0
+pillow>=10.0,<11.0
+python-dotenv>=1.0,<2.0

@@ -1,9 +1,10 @@
 ﻿.env
 .env.example
+.venv/
+__pycache__/
 nginx.conf
 .agents/
 db/
 note/
 .docs/
 scripts/
-

@@ -75,7 +75,7 @@ const ThaiDatePicker = (() => {
 })();
 
 const state = {
-  references: { test_versions: [], layer_names: [], feature_changes: [], test_actions: [] },
+  references: { test_versions: [], test_suites: [], layer_names: [], feature_changes: [], test_actions: [] },
   sessionInfo: null,
   sessions: [],
   currentSession: null,
@@ -84,6 +84,10 @@ const state = {
   commentTimers: new Map(),
   reportRows: [],
   datePicker: null,
+  reportDateFromPicker: null,
+  reportDateToPicker: null,
+  offices: [],
+  selectedBranches: new Map(),
 };
 
 const els = {};
@@ -100,7 +104,7 @@ document.addEventListener("DOMContentLoaded", () => {
 async function boot() {
   setSaveState("กำลังโหลด");
   await checkHealth();
-  await Promise.all([loadReferences(), loadSessionInfo()]);
+  await Promise.all([loadReferences(), loadSessionInfo(), loadOffices()]);
   await refreshAll();
   await loadReport();
   setSaveState("พร้อมใช้งาน");
@@ -111,6 +115,7 @@ function bindElements() {
   Object.assign(els, {
     healthBadge: document.querySelector("#health-badge"),
     refreshButton: document.querySelector("#refresh-button"),
+    saveButton: document.querySelector("#save-button"),
     exportButton: document.querySelector("#export-button"),
     themeToggle: document.querySelector("#theme-toggle"),
     sessionForm: document.querySelector("#session-form"),
@@ -118,10 +123,13 @@ function bindElements() {
     testerName: document.querySelector("#tester-name"),
     testDate: document.querySelector("#test-date"),
     createSessionButton: document.querySelector("#create-session-button"),
+    branchPicker: document.querySelector("#branch-picker"),
+    branchSelectedCount: document.querySelector("#branch-selected-count"),
     currentSessionLabel: document.querySelector("#current-session-label"),
     sessionMeta: document.querySelector("#session-meta"),
     sessionList: document.querySelector("#session-list"),
     sessionCount: document.querySelector("#session-count"),
+    sessionBranchFilter: document.querySelector("#session-branch-filter"),
     resultsBody: document.querySelector("#results-body"),
     summaryTotal: document.querySelector("#summary-total"),
     summaryPassed: document.querySelector("#summary-passed"),
@@ -129,12 +137,17 @@ function bindElements() {
     summaryPending: document.querySelector("#summary-pending"),
     saveState: document.querySelector("#save-state"),
     toast: document.querySelector("#toast"),
+    suiteFilter: document.querySelector("#suite-filter"),
     layerFilter: document.querySelector("#layer-filter"),
     featureFilter: document.querySelector("#feature-filter"),
     actionFilter: document.querySelector("#action-filter"),
     clearCaseFilters: document.querySelector("#clear-case-filters"),
+    reportVersionFilter: document.querySelector("#report-version-filter"),
+    reportSuiteFilter: document.querySelector("#report-suite-filter"),
     reportAreaFilter: document.querySelector("#report-area-filter"),
     reportTesterFilter: document.querySelector("#report-tester-filter"),
+    reportDateFrom: document.querySelector("#report-date-from"),
+    reportDateTo: document.querySelector("#report-date-to"),
     loadReportButton: document.querySelector("#load-report-button"),
     reportBody: document.querySelector("#report-body"),
   });
@@ -145,17 +158,20 @@ function bindEvents() {
     await refreshAll();
     await loadReport();
   });
+  els.saveButton.addEventListener("click", saveAllResults);
   els.exportButton.addEventListener("click", exportCurrentReport);
   els.themeToggle.addEventListener("click", toggleTheme);
   els.sessionForm.addEventListener("submit", createSession);
   document.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.tab)));
-  [els.layerFilter, els.featureFilter, els.actionFilter].forEach((select) => select.addEventListener("change", renderRows));
+  [els.suiteFilter, els.layerFilter, els.featureFilter, els.actionFilter].forEach((select) => select.addEventListener("change", renderRows));
   els.clearCaseFilters.addEventListener("click", () => {
+    els.suiteFilter.value = "";
     els.layerFilter.value = "";
     els.featureFilter.value = "";
     els.actionFilter.value = "";
     renderRows();
   });
+  els.sessionBranchFilter.addEventListener("change", renderSessions);
   els.loadReportButton.addEventListener("click", loadReport);
 }
 
@@ -183,6 +199,8 @@ function initDatePicker() {
   const today = todayISO();
   state.datePicker = ThaiDatePicker.init("#test-date", { defaultDate: today, format: "full" });
   if (!state.datePicker) els.testDate.value = today;
+  state.reportDateFromPicker = ThaiDatePicker.init("#report-date-from", { format: "short" });
+  state.reportDateToPicker = ThaiDatePicker.init("#report-date-to", { format: "short" });
 }
 
 async function refreshAll() {
@@ -214,12 +232,85 @@ async function loadReferences() {
     const payload = await requestJSON("api/references");
     state.references = payload.references ?? state.references;
     populateSelect(els.testVersion, state.references.test_versions, "เลือกเวอร์ชันทดสอบ");
+    populateSelect(els.suiteFilter, state.references.test_suites ?? [], "ทุกหมวดทดสอบ");
     populateSelect(els.layerFilter, state.references.layer_names, "ทุกชั้นข้อมูล", layerLabel);
     populateSelect(els.featureFilter, state.references.feature_changes, "ทุก feature changes");
     populateSelect(els.actionFilter, state.references.test_actions, "ทุก action");
+    populateSelect(els.reportVersionFilter, state.references.test_versions, "ทุกเวอร์ชัน");
+    populateSelect(els.reportSuiteFilter, state.references.test_suites ?? [], "ทุกหมวด");
   } catch (error) {
     showToast(error.message);
   }
+}
+
+async function loadOffices() {
+  try {
+    const payload = await requestJSON("api/offices");
+    state.offices = payload.offices ?? [];
+  } catch (error) {
+    state.offices = [];
+  } finally {
+    renderBranchPicker();
+  }
+}
+
+function renderBranchPicker() {
+  if (!els.branchPicker) return;
+  if (state.offices.length === 0) {
+    els.branchPicker.innerHTML = `<div class="py-6 text-center text-xs text-slate-500">ไม่พบรายชื่อสาขา (ใช้สาขาของผู้ทดสอบแทน)</div>`;
+    updateBranchSelectedCount();
+    return;
+  }
+
+  const byZone = new Map();
+  state.offices.forEach((office) => {
+    const zone = office.zone || "ไม่ระบุเขต";
+    if (!byZone.has(zone)) byZone.set(zone, []);
+    byZone.get(zone).push(office);
+  });
+
+  const zones = [...byZone.keys()].sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
+  els.branchPicker.innerHTML = zones
+    .map((zone) => {
+      const offices = byZone.get(zone);
+      const rows = offices
+        .map((office) => {
+          const checked = state.selectedBranches.has(office.pwa_code) ? "checked" : "";
+          return `
+            <label class="flex items-center gap-2 rounded px-2 py-1 hover:bg-slate-50 dark:hover:bg-slate-800">
+              <input type="checkbox" class="h-4 w-4 rounded border-slate-300" data-branch-checkbox data-pwa-code="${escapeHTML(office.pwa_code)}" data-name="${escapeHTML(office.name)}" data-zone="${escapeHTML(office.zone)}" ${checked} />
+              <span>${escapeHTML(office.name)} <span class="text-xs text-slate-400">(${escapeHTML(office.pwa_code)})</span></span>
+            </label>
+          `;
+        })
+        .join("");
+      return `
+        <div class="mb-2">
+          <div class="mb-1 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">เขต ${escapeHTML(zone)}</div>
+          <div class="grid gap-0.5 sm:grid-cols-2">${rows}</div>
+        </div>
+      `;
+    })
+    .join("");
+
+  els.branchPicker.querySelectorAll("[data-branch-checkbox]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const { pwaCode, name, zone } = checkbox.dataset;
+      if (checkbox.checked) {
+        state.selectedBranches.set(pwaCode, { pwa_code: pwaCode, name, zone });
+      } else {
+        state.selectedBranches.delete(pwaCode);
+      }
+      updateBranchSelectedCount();
+    });
+  });
+  updateBranchSelectedCount();
+}
+
+function updateBranchSelectedCount() {
+  if (!els.branchSelectedCount) return;
+  const count = state.selectedBranches.size;
+  els.branchSelectedCount.textContent = count === 0 ? "ยังไม่ได้เลือก (จะใช้สาขาของผู้ทดสอบ)" : `เลือกแล้ว ${count} สาขา`;
 }
 
 async function loadSessionInfo() {
@@ -278,6 +369,7 @@ async function createSession(event) {
     showToast("ยังไม่มีข้อมูลผู้ทดสอบจาก session info");
     return;
   }
+  const branches = [...state.selectedBranches.values()];
   const input = {
     test_version: els.testVersion.value,
     tester_name: state.sessionInfo.uname,
@@ -290,6 +382,7 @@ async function createSession(event) {
     position: state.sessionInfo.position,
     test_date: selectedDateISO(),
   };
+  if (branches.length > 0) input.branches = branches;
 
   try {
     els.createSessionButton.disabled = true;
@@ -301,7 +394,8 @@ async function createSession(event) {
     await loadSessions();
     await selectSession(payload.session.id);
     await loadReport();
-    showToast("สร้าง session แล้ว");
+    const createdCount = payload.sessions?.length ?? 1;
+    showToast(createdCount > 1 ? `สร้าง ${createdCount} session (หนึ่งต่อสาขา) แล้ว` : "สร้าง session แล้ว");
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -329,23 +423,28 @@ async function selectSession(sessionID) {
 }
 
 function renderSessions() {
+  syncSessionBranchFilter();
+  const branchFilter = els.sessionBranchFilter?.value ?? "";
+  const visibleSessions = branchFilter ? state.sessions.filter((session) => session.pwa_code === branchFilter) : state.sessions;
+
   els.sessionCount.textContent = String(state.sessions.length);
-  if (state.sessions.length === 0) {
+  if (visibleSessions.length === 0) {
     els.sessionList.innerHTML = `<div class="px-4 py-8 text-center text-sm text-slate-500">ยังไม่มี session</div>`;
     return;
   }
 
-  els.sessionList.innerHTML = state.sessions
+  els.sessionList.innerHTML = visibleSessions
     .map((session) => {
       const active = state.currentSession?.id === session.id;
       const classes = active
         ? "border-l-4 border-primary-600 bg-primary-50 text-primary-950 dark:bg-sky-950/40 dark:text-sky-100"
         : "border-l-4 border-transparent bg-white text-slate-800 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800";
+      const branchLabel = session.branch_name ? `${session.branch_name} · ` : "";
       return `
         <button type="button" class="block w-full px-4 py-3 text-left ${classes}" data-session-id="${session.id}">
           <span class="block text-sm font-semibold">${escapeHTML(session.test_version)}</span>
           <span class="mt-1 block text-xs text-slate-600 dark:text-slate-300">${escapeHTML(formatDisplayDate(session.test_date))} · ${escapeHTML(session.tester_name)}</span>
-          <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">เขต ${escapeHTML(session.area || "-")} · ${escapeHTML(session.pwa_code || "-")}</span>
+          <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">${escapeHTML(branchLabel)}เขต ${escapeHTML(session.area || "-")} · ${escapeHTML(session.pwa_code || "-")}</span>
         </button>
       `;
     })
@@ -356,9 +455,21 @@ function renderSessions() {
   });
 }
 
+function syncSessionBranchFilter() {
+  if (!els.sessionBranchFilter) return;
+  const current = els.sessionBranchFilter.value;
+  const branches = uniqueSorted(state.sessions.map((session) => session.pwa_code).filter(Boolean));
+  populateSelect(els.sessionBranchFilter, branches, "ทุกสาขา", (pwaCode) => {
+    const session = state.sessions.find((item) => item.pwa_code === pwaCode);
+    return session?.branch_name ? `${session.branch_name} (${pwaCode})` : pwaCode;
+  });
+  els.sessionBranchFilter.value = branches.includes(current) ? current : "";
+}
+
 function renderWorkbench() {
   renderSummary(state.summary);
   els.exportButton.disabled = !state.currentSession;
+  els.saveButton.disabled = !state.currentSession || !state.sessionInfo;
 
   if (!state.currentSession) {
     els.currentSessionLabel.textContent = "ยังไม่ได้เลือก session";
@@ -383,12 +494,18 @@ function renderSummary(summary) {
 }
 
 function filteredResults() {
+  const suite = els.suiteFilter.value;
   const layer = els.layerFilter.value;
   const feature = els.featureFilter.value;
   const action = els.actionFilter.value;
   return state.results.filter((result) => {
     const testCase = result.test_case;
-    return (!layer || testCase.layer_name === layer) && (!feature || testCase.feature_changes === feature) && (!action || testCase.test_action === action);
+    return (
+      (!suite || testCase.test_suite === suite) &&
+      (!layer || testCase.layer_name === layer) &&
+      (!feature || testCase.feature_changes === feature) &&
+      (!action || testCase.test_action === action)
+    );
   });
 }
 
@@ -494,11 +611,41 @@ async function saveResult(result) {
   }
 }
 
-async function loadReport() {
+// Save button: flush any pending debounced comment saves and push every
+// result on the page immediately. Auto-save (updateOutcome / debounced
+// updateComment -> saveResult) keeps running independently as a safety net.
+async function saveAllResults() {
+  if (!state.currentSession || state.results.length === 0) return;
+
+  state.commentTimers.forEach((timerId) => window.clearTimeout(timerId));
+  state.commentTimers.clear();
+
+  try {
+    els.saveButton.disabled = true;
+    setSaveState("กำลังบันทึกทั้งหมด");
+    await Promise.all(state.results.map((result) => saveResult(result)));
+    setSaveState(`บันทึกทั้งหมดแล้ว ${new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}`);
+    showToast("บันทึกผลทั้งหมดแล้ว");
+  } finally {
+    els.saveButton.disabled = !state.currentSession || !state.sessionInfo;
+  }
+}
+
+function reportFilterParams() {
   const params = new URLSearchParams();
+  if (els.reportVersionFilter.value) params.set("test_version", els.reportVersionFilter.value);
+  if (els.reportSuiteFilter.value) params.set("test_suite", els.reportSuiteFilter.value);
   if (els.reportAreaFilter.value) params.set("area", els.reportAreaFilter.value);
   if (els.reportTesterFilter.value) params.set("tester_name", els.reportTesterFilter.value);
-  const query = params.toString();
+  const dateFrom = state.reportDateFromPicker?.getDate();
+  const dateTo = state.reportDateToPicker?.getDate();
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  return params;
+}
+
+async function loadReport() {
+  const query = reportFilterParams().toString();
   try {
     const payload = await requestJSON(`api/report${query ? `?${query}` : ""}`);
     state.reportRows = payload.rows ?? [];
@@ -510,7 +657,7 @@ async function loadReport() {
 
 function renderReport() {
   if (state.reportRows.length === 0) {
-    els.reportBody.innerHTML = `<tr><td colspan="9" class="px-3 py-10 text-center text-sm text-slate-500">ไม่พบข้อมูลรายงาน</td></tr>`;
+    els.reportBody.innerHTML = `<tr><td colspan="10" class="px-3 py-10 text-center text-sm text-slate-500">ไม่พบข้อมูลรายงาน</td></tr>`;
     return;
   }
   els.reportBody.innerHTML = state.reportRows
@@ -521,6 +668,7 @@ function renderReport() {
         <tr class="bg-white dark:bg-slate-900">
           <td class="px-3 py-3">${escapeHTML(formatDisplayDate(row.test_date))}</td>
           <td class="px-3 py-3">${escapeHTML(row.test_version)}</td>
+          <td class="px-3 py-3">${escapeHTML(row.test_suite || "-")}</td>
           <td class="px-3 py-3">${escapeHTML(row.tester_name)}</td>
           <td class="px-3 py-3">${escapeHTML(row.area || "-")}</td>
           <td class="px-3 py-3">${escapeHTML(row.pwa_code || "-")}</td>
@@ -544,6 +692,7 @@ async function exportCurrentReport() {
     const headers = [
       "วันที่ทดสอบ",
       "เวอร์ชันทดสอบ",
+      "หมวดทดสอบ",
       "ผู้ทดสอบ",
       "รหัสผู้ใช้",
       "รหัส กปภ.",
@@ -563,6 +712,7 @@ async function exportCurrentReport() {
     const csvRows = rows.map((row) => [
       row.test_date,
       row.test_version,
+      row.test_suite,
       row.tester_name,
       row.uid,
       row.pwa_code,

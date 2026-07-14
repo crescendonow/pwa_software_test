@@ -12,33 +12,39 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
 type HandlerConfig struct {
-	SessionInfoURL string
-	LoginURL       string
-	LogoutURL      string
-	HTTPClient     *http.Client
+	SessionInfoURL   string
+	LoginURL         string
+	LogoutURL        string
+	OfficesURL       string
+	NLPURL           string
+	FreeTextQueryURL string
+	HTTPClient       *http.Client
 }
 
 type Server struct {
-	store          Store
-	staticFS       fs.FS
-	sessionInfoURL string
-	loginURL       string
-	logoutURL      string
-	httpClient     *http.Client
-	activityMu     sync.Mutex
-	activity       map[string]time.Time
+	store            Store
+	staticFS         fs.FS
+	sessionInfoURL   string
+	loginURL         string
+	logoutURL        string
+	officesURL       string
+	nlpURL           string
+	freeTextQueryURL string
+	httpClient       *http.Client
 }
 
 func NewHandler(store Store, staticFS fs.FS) http.Handler {
 	return NewHandlerWithConfig(store, staticFS, HandlerConfig{
-		SessionInfoURL: os.Getenv("SESSION_INFO_URL"),
-		LoginURL:       os.Getenv("LOGIN_URL"),
-		LogoutURL:      os.Getenv("LOGOUT_URL"),
+		SessionInfoURL:   os.Getenv("SESSION_INFO_URL"),
+		LoginURL:         os.Getenv("LOGIN_URL"),
+		LogoutURL:        os.Getenv("LOGOUT_URL"),
+		OfficesURL:       os.Getenv("OFFICES_URL"),
+		NLPURL:           os.Getenv("NLP_URL"),
+		FreeTextQueryURL: os.Getenv("FREETEXT_QUERY_URL"),
 	})
 }
 
@@ -48,13 +54,15 @@ func NewHandlerWithConfig(store Store, staticFS fs.FS, cfg HandlerConfig) http.H
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	server := &Server{
-		store:          store,
-		staticFS:       staticFS,
-		sessionInfoURL: strings.TrimSpace(cfg.SessionInfoURL),
-		loginURL:       strings.TrimSpace(cfg.LoginURL),
-		logoutURL:      strings.TrimSpace(cfg.LogoutURL),
-		httpClient:     client,
-		activity:       make(map[string]time.Time),
+		store:            store,
+		staticFS:         staticFS,
+		sessionInfoURL:   strings.TrimSpace(cfg.SessionInfoURL),
+		loginURL:         strings.TrimSpace(cfg.LoginURL),
+		logoutURL:        strings.TrimSpace(cfg.LogoutURL),
+		officesURL:       strings.TrimSpace(cfg.OfficesURL),
+		nlpURL:           strings.TrimSpace(cfg.NLPURL),
+		freeTextQueryURL: strings.TrimSpace(cfg.FreeTextQueryURL),
+		httpClient:       client,
 	}
 	mux := http.NewServeMux()
 
@@ -64,12 +72,16 @@ func NewHandlerWithConfig(store Store, staticFS fs.FS, cfg HandlerConfig) http.H
 	mux.HandleFunc("GET /api/health", server.handleHealth)
 	mux.HandleFunc("GET /api/references", server.handleReferences)
 	mux.HandleFunc("GET /api/session-info", server.handleSessionInfo)
+	mux.HandleFunc("GET /api/offices", server.handleOffices)
 	mux.HandleFunc("GET /api/test-cases", server.handleTestCases)
 	mux.HandleFunc("GET /api/sessions", server.handleSessions)
 	mux.HandleFunc("POST /api/sessions", server.handleSessions)
 	mux.HandleFunc("/api/sessions/", server.handleSessionDetail)
 	mux.HandleFunc("/api/results/", server.handleResultDetail)
 	mux.HandleFunc("GET /api/report", server.handleReport)
+	mux.HandleFunc("GET /api/dashboard/summary", server.handleDashboardSummary)
+	mux.HandleFunc("GET /api/dashboard/wordcloud", server.handleDashboardWordcloud)
+	mux.HandleFunc("POST /api/freetext-query", server.handleFreeTextQuery)
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	return server.requireAuthentication(mux)
@@ -229,6 +241,56 @@ func (s *Server) resolveSessionInfoURL(r *http.Request) (string, error) {
 	return resolveConfiguredURL(s.sessionInfoURL, r)
 }
 
+// handleOffices proxies the branch office list from pwa_gis_tracking
+// (GET /pwa_gis_tracking/api/offices) so the create-session form can offer a
+// multi-branch picker without this service talking to the office database
+// directly. Reuses the same proxy pattern as handleSessionInfo.
+func (s *Server) handleOffices(w http.ResponseWriter, r *http.Request) {
+	if s.officesURL == "" {
+		writeError(w, http.StatusServiceUnavailable, "OFFICES_URL is not configured")
+		return
+	}
+
+	upstreamURL, err := resolveConfiguredURL(s.officesURL, r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid OFFICES_URL")
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL, nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create offices request")
+		return
+	}
+	copyForwardHeaders(req, r)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "could not load offices")
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		writeError(w, resp.StatusCode, "login required")
+		return
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("offices upstream returned %d", resp.StatusCode))
+		return
+	}
+
+	var upstream struct {
+		Status string       `json:"status"`
+		Data   []OfficeInfo `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&upstream); err != nil {
+		writeError(w, http.StatusBadGateway, "invalid offices response")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"offices": upstream.Data})
+}
+
 func resolveConfiguredURL(rawURL string, r *http.Request) (string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -274,8 +336,11 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		filters := SessionFilters{
-			Area:       strings.TrimSpace(r.URL.Query().Get("area")),
-			TesterName: strings.TrimSpace(r.URL.Query().Get("tester_name")),
+			Area:        strings.TrimSpace(r.URL.Query().Get("area")),
+			TesterName:  strings.TrimSpace(r.URL.Query().Get("tester_name")),
+			TestVersion: strings.TrimSpace(r.URL.Query().Get("test_version")),
+			DateFrom:    strings.TrimSpace(r.URL.Query().Get("date_from")),
+			DateTo:      strings.TrimSpace(r.URL.Query().Get("date_to")),
 		}
 		sessions, err := s.store.ListSessions(r.Context(), filters)
 		if err != nil {
@@ -295,12 +360,32 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		session, err := s.store.CreateSession(r.Context(), input)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not create session")
-			return
+		// A tester may run UAT against several branches in one go: create one
+		// session per selected branch (pwa_code), each with its own results.
+		branches := input.Branches
+		if len(branches) == 0 {
+			branches = []BranchInput{{PwaCode: input.PwaCode, Name: input.BranchName, Zone: input.Area}}
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"session": session})
+
+		sessions := make([]Session, 0, len(branches))
+		for _, branch := range branches {
+			branchInput := input
+			branchInput.Branches = nil
+			branchInput.PwaCode = strings.TrimSpace(branch.PwaCode)
+			branchInput.BranchName = strings.TrimSpace(branch.Name)
+			if zone := strings.TrimSpace(branch.Zone); zone != "" {
+				branchInput.Area = zone
+			}
+
+			session, err := s.store.CreateSession(r.Context(), branchInput)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "could not create session")
+				return
+			}
+			sessions = append(sessions, session)
+		}
+
+		writeJSON(w, http.StatusCreated, map[string]any{"session": sessions[0], "sessions": sessions})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -378,8 +463,12 @@ func (s *Server) handleResultDetail(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 	filters := ReportFilters{
-		Area:       strings.TrimSpace(r.URL.Query().Get("area")),
-		TesterName: strings.TrimSpace(r.URL.Query().Get("tester_name")),
+		Area:        strings.TrimSpace(r.URL.Query().Get("area")),
+		TesterName:  strings.TrimSpace(r.URL.Query().Get("tester_name")),
+		TestVersion: strings.TrimSpace(r.URL.Query().Get("test_version")),
+		TestSuite:   strings.TrimSpace(r.URL.Query().Get("test_suite")),
+		DateFrom:    strings.TrimSpace(r.URL.Query().Get("date_from")),
+		DateTo:      strings.TrimSpace(r.URL.Query().Get("date_to")),
 	}
 	if rawSessionID := strings.TrimSpace(r.URL.Query().Get("session_id")); rawSessionID != "" {
 		sessionID, err := strconv.ParseInt(rawSessionID, 10, 64)
@@ -396,6 +485,156 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
+}
+
+func dashboardFiltersFromQuery(r *http.Request) DashboardFilters {
+	query := r.URL.Query()
+	return DashboardFilters{
+		Area:        strings.TrimSpace(query.Get("area")),
+		TestVersion: strings.TrimSpace(query.Get("test_version")),
+		TestSuite:   strings.TrimSpace(query.Get("test_suite")),
+		DateFrom:    strings.TrimSpace(query.Get("date_from")),
+		DateTo:      strings.TrimSpace(query.Get("date_to")),
+	}
+}
+
+func (s *Server) handleDashboardSummary(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.store.DashboardSummary(r.Context(), dashboardFiltersFromQuery(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load dashboard summary")
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+// handleDashboardWordcloud pulls comments for the given filter from the
+// database and forwards them to the internal Python NLP microservice, which
+// tokenizes Thai text and returns [{word, weight}]. The Python service is
+// never exposed directly to the browser.
+func (s *Server) handleDashboardWordcloud(w http.ResponseWriter, r *http.Request) {
+	if s.nlpURL == "" {
+		writeError(w, http.StatusServiceUnavailable, "NLP_URL is not configured")
+		return
+	}
+
+	comments, err := s.store.ListComments(r.Context(), dashboardFiltersFromQuery(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load comments")
+		return
+	}
+
+	body, err := json.Marshal(map[string]any{"comments": comments})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not encode comments")
+		return
+	}
+
+	upstreamURL, err := resolveConfiguredURL(s.nlpURL, r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid NLP_URL")
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, upstreamURL, bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create wordcloud request")
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "could not reach nlp service")
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("nlp service returned %d", resp.StatusCode))
+		return
+	}
+
+	var words []WordCloudItem
+	if err := json.NewDecoder(resp.Body).Decode(&words); err != nil {
+		writeError(w, http.StatusBadGateway, "invalid wordcloud response")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"words": words})
+}
+
+// handleFreeTextQuery forwards a prompt and the authenticated actor identity
+// to the loopback-only Python service. The browser never receives generated
+// SQL; the Python response is already limited to an answer and result table.
+func (s *Server) handleFreeTextQuery(w http.ResponseWriter, r *http.Request) {
+	if s.freeTextQueryURL == "" {
+		writeError(w, http.StatusServiceUnavailable, "FREETEXT_QUERY_URL is not configured")
+		return
+	}
+
+	var input FreeTextQueryInput
+	if err := readJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	input.Prompt = strings.TrimSpace(input.Prompt)
+	if input.Prompt == "" {
+		writeError(w, http.StatusBadRequest, "prompt is required")
+		return
+	}
+	if len([]rune(input.Prompt)) > 500 {
+		writeError(w, http.StatusBadRequest, "prompt must be at most 500 characters")
+		return
+	}
+
+	info, err := s.loadSessionInfo(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	if info.UID == "" {
+		writeError(w, http.StatusUnauthorized, "authenticated user id is missing")
+		return
+	}
+	body, err := json.Marshal(map[string]any{
+		"prompt": input.Prompt,
+		"actor":  map[string]string{"uid": info.UID, "uname": info.UName},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not encode free-text query")
+		return
+	}
+
+	upstreamURL, err := resolveConfiguredURL(s.freeTextQueryURL, r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid FREETEXT_QUERY_URL")
+		return
+	}
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, upstreamURL, bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create free-text query request")
+		return
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+
+	resp, err := s.httpClient.Do(request)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "could not reach free-text query service")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("free-text query service returned %d", resp.StatusCode))
+		return
+	}
+
+	var result FreeTextQueryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		writeError(w, http.StatusBadGateway, "invalid free-text query response")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func normalizeSessionInfo(info *SessionInfo) {
@@ -416,12 +655,18 @@ func normalizeCreateSessionInput(input *CreateSessionInput) {
 	input.TesterName = strings.TrimSpace(input.TesterName)
 	input.UID = strings.TrimSpace(input.UID)
 	input.PwaCode = strings.TrimSpace(input.PwaCode)
+	input.BranchName = strings.TrimSpace(input.BranchName)
 	input.Area = strings.TrimSpace(input.Area)
 	input.JobName = strings.TrimSpace(input.JobName)
 	input.Division = strings.TrimSpace(input.Division)
 	input.Institution = strings.TrimSpace(input.Institution)
 	input.Position = strings.TrimSpace(input.Position)
 	input.TestDate = strings.TrimSpace(input.TestDate)
+	for i := range input.Branches {
+		input.Branches[i].PwaCode = strings.TrimSpace(input.Branches[i].PwaCode)
+		input.Branches[i].Name = strings.TrimSpace(input.Branches[i].Name)
+		input.Branches[i].Zone = strings.TrimSpace(input.Branches[i].Zone)
+	}
 }
 
 func validateCreateSessionInput(input CreateSessionInput) error {
@@ -529,8 +774,8 @@ func (s *Server) requireAuthentication(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		info, err := s.loadSessionInfo(r)
-		if err != nil || s.expired(info.UID) {
+		_, err := s.loadSessionInfo(r)
+		if err != nil {
 			if strings.HasPrefix(path, "/api/") {
 				writeError(w, http.StatusUnauthorized, "login required")
 			} else {
@@ -538,7 +783,6 @@ func (s *Server) requireAuthentication(next http.Handler) http.Handler {
 			}
 			return
 		}
-		s.touchActivity(info.UID)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -573,19 +817,4 @@ func (s *Server) loadSessionInfo(r *http.Request) (SessionInfo, error) {
 		return SessionInfo{}, errors.New("session info missing uname")
 	}
 	return info, nil
-}
-
-const inactivityLimit = 3 * time.Hour
-
-func (s *Server) expired(uid string) bool {
-	s.activityMu.Lock()
-	defer s.activityMu.Unlock()
-	last, ok := s.activity[uid]
-	return ok && time.Since(last) >= inactivityLimit
-}
-
-func (s *Server) touchActivity(uid string) {
-	s.activityMu.Lock()
-	defer s.activityMu.Unlock()
-	s.activity[uid] = time.Now()
 }

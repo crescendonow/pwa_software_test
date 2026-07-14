@@ -15,6 +15,9 @@
 - `db/002_seed_from_excel.sql`: seed test cases และ imported session จาก Excel
 - `cmd/server/main.go`: entrypoint
 - `internal/uat`: API, models, PostgreSQL store
+- `nlp/README.md`: native Thai NLP service setup and deployment runbook
+- `freetext_query/`: authenticated free-text to read-only UAT query service
+- `install_nssm_services.ps1`: Windows NSSM installer for both Python services
 - `web`: frontend
 
 ## Run With PostgreSQL
@@ -54,6 +57,7 @@ go run ./cmd/server
 - `GET /api/sessions/{id}/results`
 - `PATCH /api/results/{id}`
 - `GET /api/report?session_id={id}`
+- `POST /api/freetext-query` with `{ "prompt": "..." }`
 
 ## Verify
 

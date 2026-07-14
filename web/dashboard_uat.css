@@ -1,0 +1,13 @@
+/* Dashboard-specific tweaks. Base look (surface/field-control/summary-card/
+   icon-text-button/tab-button) is shared with pwagis_uat.css, loaded first. */
+
+#wordcloud-canvas {
+  display: block;
+  height: 360px;
+  border-radius: 8px;
+  background: rgb(248 250 252);
+}
+
+.dark #wordcloud-canvas {
+  background: rgb(15 23 42);
+}
