@@ -9,7 +9,20 @@ $ErrorActionPreference = "Stop"
 
 function Invoke-Nssm {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
+    # Windows PowerShell turns anything nssm writes to stderr into a
+    # NativeCommandError, which $ErrorActionPreference = "Stop" would promote to
+    # a terminating error. nssm is chatty on stderr even when it succeeds, so
+    # let it talk and judge the outcome by the exit code instead.
+    $ErrorActionPreference = "Continue"
     & $NssmPath @Args
+}
+
+function Invoke-NssmChecked {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
+    Invoke-Nssm @Args
+    if ($LASTEXITCODE -ne 0) {
+        throw "nssm $($Args -join ' ') failed with exit code $LASTEXITCODE"
+    }
 }
 
 if (-not (Test-Path -LiteralPath $NssmPath)) {
@@ -30,8 +43,18 @@ function Protect-EnvFile {
     if (-not (Test-Path -LiteralPath $Path)) {
         throw "Production environment file is missing: $Path"
     }
-    $grant = "{0}:(R)" -f $Account
-    & icacls.exe $Path /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)" $grant | Out-Host
+    # SYSTEM and Administrators always get Full. Map built-in service identities to
+    # the names icacls can resolve, and skip a redundant grant when the account is
+    # already covered by SYSTEM (LocalSystem runs as SYSTEM).
+    $grants = @('SYSTEM:(F)', 'Administrators:(F)')
+    $extra = switch ($Account) {
+        'LocalSystem'                 { $null }
+        'NT AUTHORITY\LocalService'   { 'LOCAL SERVICE' }
+        'NT AUTHORITY\NetworkService' { 'NETWORK SERVICE' }
+        default                       { $Account }
+    }
+    if ($extra) { $grants += ('{0}:(R)' -f $extra) }
+    & icacls.exe $Path /inheritance:r /grant:r @grants | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "Could not restrict ACL on $Path"
     }
@@ -69,21 +92,28 @@ foreach ($service in $services) {
     if (-not $Apply) { continue }
 
     New-Item -ItemType Directory -Force -Path $service.LogDirectory | Out-Null
-    Invoke-Nssm stop $service.Name 2>$null
-    Invoke-Nssm remove $service.Name confirm 2>$null
-    Invoke-Nssm install $service.Name $service.Python
-    Invoke-Nssm set $service.Name AppParameters $service.Parameters
-    Invoke-Nssm set $service.Name AppDirectory $service.Directory
-    Invoke-Nssm set $service.Name DisplayName $service.DisplayName
-    Invoke-Nssm set $service.Name Description $service.Description
-    Invoke-Nssm set $service.Name Start SERVICE_AUTO_START
-    Invoke-Nssm set $service.Name AppStdout $stdout
-    Invoke-Nssm set $service.Name AppStderr $stderr
-    Invoke-Nssm set $service.Name AppRotateFiles 1
-    Invoke-Nssm set $service.Name AppRotateOnline 1
-    Invoke-Nssm set $service.Name AppRotateBytes 10485760
-    Invoke-Nssm set $service.Name AppExit Default Restart
-    Invoke-Nssm set $service.Name AppRestartDelay 5000
+
+    # Only tear down what is actually there. A fresh box has no service yet, and
+    # asking nssm to stop it just prints "Can't open service!".
+    if (Get-Service -Name $service.Name -ErrorAction SilentlyContinue) {
+        Write-Host "  removing existing $($service.Name)"
+        Invoke-Nssm stop $service.Name
+        Invoke-NssmChecked remove $service.Name confirm
+    }
+
+    Invoke-NssmChecked install $service.Name $service.Python
+    Invoke-NssmChecked set $service.Name AppParameters $service.Parameters
+    Invoke-NssmChecked set $service.Name AppDirectory $service.Directory
+    Invoke-NssmChecked set $service.Name DisplayName $service.DisplayName
+    Invoke-NssmChecked set $service.Name Description $service.Description
+    Invoke-NssmChecked set $service.Name Start SERVICE_AUTO_START
+    Invoke-NssmChecked set $service.Name AppStdout $stdout
+    Invoke-NssmChecked set $service.Name AppStderr $stderr
+    Invoke-NssmChecked set $service.Name AppRotateFiles 1
+    Invoke-NssmChecked set $service.Name AppRotateOnline 1
+    Invoke-NssmChecked set $service.Name AppRotateBytes 10485760
+    Invoke-NssmChecked set $service.Name AppExit Default Restart
+    Invoke-NssmChecked set $service.Name AppRestartDelay 5000
 }
 
 if (-not $Apply) {
@@ -102,14 +132,14 @@ if (-not $Apply) {
 
     foreach ($service in $services) {
         if ($builtInAccount) {
-            Invoke-Nssm set $service.Name ObjectName $ServiceUser
+            Invoke-NssmChecked set $service.Name ObjectName $ServiceUser
         } else {
-            Invoke-Nssm set $service.Name ObjectName $ServiceUser $servicePassword
+            Invoke-NssmChecked set $service.Name ObjectName $ServiceUser $servicePassword
         }
     }
 
     foreach ($service in $services) {
-        Invoke-Nssm start $service.Name
+        Invoke-NssmChecked start $service.Name
     }
 
     Invoke-RestMethod "http://127.0.0.1:5023/healthz" | Out-Host
