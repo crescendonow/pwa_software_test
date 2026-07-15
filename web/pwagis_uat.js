@@ -447,23 +447,28 @@ function renderSessions() {
 
   els.sessionCount.textContent = String(state.sessions.length);
   if (visibleSessions.length === 0) {
-    els.sessionList.innerHTML = `<div class="px-4 py-8 text-center text-sm text-slate-500">ยังไม่มี session</div>`;
+    els.sessionList.innerHTML = `<div class="flex min-w-full items-center justify-center px-4 py-8 text-center text-sm text-slate-500">ยังไม่มี session</div>`;
     return;
   }
 
   els.sessionList.innerHTML = visibleSessions
     .map((session) => {
       const active = state.currentSession?.id === session.id;
-      const classes = active
-        ? "border-l-4 border-primary-600 bg-primary-50 text-primary-950 dark:bg-sky-950/40 dark:text-sky-100"
-        : "border-l-4 border-transparent bg-white text-slate-800 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800";
       const branchLabel = session.branch_name ? `${session.branch_name} · ` : "";
+      const canDelete = state.sessionInfo?.uid === session.uid;
       return `
-        <button type="button" class="block w-full px-4 py-3 text-left ${classes}" data-session-id="${session.id}">
-          <span class="block text-sm font-semibold">${escapeHTML(session.test_version)}</span>
-          <span class="mt-1 block text-xs text-slate-600 dark:text-slate-300">${escapeHTML(formatDisplayDate(session.test_date))} · ${escapeHTML(session.tester_name)}</span>
-          <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">${escapeHTML(branchLabel)}เขต ${escapeHTML(session.area || "-")} · ${escapeHTML(session.pwa_code || "-")}</span>
-        </button>
+        <div class="session-nav-item ${active ? "active" : ""}">
+          <button type="button" class="session-nav-select" data-session-id="${session.id}" ${active ? 'aria-current="page"' : ""}>
+            <span class="block text-sm font-semibold">${escapeHTML(session.test_version)}</span>
+            <span class="mt-1 block text-xs text-slate-600 dark:text-slate-300">${escapeHTML(formatDisplayDate(session.test_date))} · ${escapeHTML(session.tester_name)}</span>
+            <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">${escapeHTML(branchLabel)}เขต ${escapeHTML(session.area || "-")} · ${escapeHTML(session.pwa_code || "-")}</span>
+          </button>
+          ${canDelete ? `
+            <button type="button" class="session-delete-button" data-delete-session-id="${session.id}" title="ลบ session" aria-label="ลบ session ${escapeHTML(session.test_version)}">
+              <i data-lucide="trash-2" class="h-4 w-4"></i>
+            </button>
+          ` : ""}
+        </div>
       `;
     })
     .join("");
@@ -471,6 +476,30 @@ function renderSessions() {
   els.sessionList.querySelectorAll("[data-session-id]").forEach((button) => {
     button.addEventListener("click", () => selectSession(Number(button.dataset.sessionId)));
   });
+  els.sessionList.querySelectorAll("[data-delete-session-id]").forEach((button) => {
+    button.addEventListener("click", () => deleteSession(Number(button.dataset.deleteSessionId)));
+  });
+  refreshIcons();
+}
+
+async function deleteSession(sessionID) {
+  if (!window.confirm("ลบ session นี้ใช่หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้")) return;
+  try {
+    setSaveState("กำลังลบ session");
+    await requestJSON(`api/sessions/${sessionID}`, { method: "DELETE" });
+    if (state.currentSession?.id === sessionID) {
+      state.currentSession = null;
+      state.results = [];
+      state.summary = { total: 0, passed: 0, failed: 0, pending: 0 };
+    }
+    await refreshAll();
+    await loadReport();
+    showToast("ลบ session แล้ว");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    setSaveState("พร้อมใช้งาน");
+  }
 }
 
 function syncSessionBranchFilter() {
@@ -902,40 +931,3 @@ function recordActivity() {
 ["click", "keydown", "scroll", "touchstart", "change"].forEach((eventName) => {
   window.addEventListener(eventName, recordActivity, { passive: eventName !== "keydown" });
 });
-
-
-const renderSessionsBase = renderSessions;
-renderSessions = function renderSessionsWithDelete() {
-  renderSessionsBase();
-  els.sessionList.querySelectorAll("[data-session-id]").forEach((selectButton) => {
-    const session = state.sessions.find((item) => item.id === Number(selectButton.dataset.sessionId));
-    if (!session || state.sessionInfo?.uid !== session.uid) return;
-
-    const deleteButton = document.createElement("button");
-    deleteButton.type = "button";
-    deleteButton.className = "mx-3 rounded border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300";
-    deleteButton.textContent = "delete";
-    deleteButton.title = "delete session";
-    deleteButton.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      if (!window.confirm("ลบ session นี้ใช่หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้")) return;
-      try {
-        setSaveState("กำลังลบ session");
-        await requestJSON(`api/sessions/${session.id}`, { method: "DELETE" });
-        if (state.currentSession?.id === session.id) {
-          state.currentSession = null;
-          state.results = [];
-          state.summary = { total: 0, passed: 0, failed: 0, pending: 0 };
-        }
-        await refreshAll();
-        await loadReport();
-        showToast("ลบ session แล้ว");
-      } catch (error) {
-        showToast(error.message);
-      } finally {
-        setSaveState("พร้อมใช้งาน");
-      }
-    });
-    selectButton.insertAdjacentElement("afterend", deleteButton);
-  });
-};

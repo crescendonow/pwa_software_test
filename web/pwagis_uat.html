@@ -112,19 +112,18 @@
       </div>
 
       <section id="workbench-panel" data-panel="workbench">
-        <div class="grid gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
-          <aside class="surface min-h-[240px] overflow-hidden">
-            <div class="flex h-12 items-center justify-between border-b border-slate-200 px-4 dark:border-slate-700">
+        <nav class="surface mb-4 overflow-hidden" aria-label="Sessions">
+          <div class="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between">
+            <div class="flex items-center gap-2">
               <h2 class="text-sm font-semibold">Sessions</h2>
-              <span id="session-count" class="text-xs font-medium text-slate-500">0</span>
+              <span id="session-count" class="inline-flex min-w-6 justify-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">0</span>
             </div>
-            <div class="border-b border-slate-200 px-3 py-2 dark:border-slate-700">
-              <select id="session-branch-filter" class="field-control compact"><option value="">ทุกสาขา</option></select>
-            </div>
-            <div id="session-list" class="max-h-[calc(100vh-360px)] min-h-[180px] overflow-y-auto"></div>
-          </aside>
+            <select id="session-branch-filter" class="field-control compact sm:max-w-72"><option value="">ทุกสาขา</option></select>
+          </div>
+          <div id="session-list" class="session-navbar" aria-label="รายการ Sessions"></div>
+        </nav>
 
-          <section class="surface min-w-0 overflow-hidden">
+        <section class="surface min-w-0 overflow-hidden">
             <div class="grid gap-4 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <div class="summary-card"><span>ทั้งหมด</span><strong id="summary-total">0</strong></div>
@@ -152,14 +151,13 @@
                     <th class="w-[320px] px-3 py-3">หัวข้อการทดสอบ</th>
                     <th class="w-[72px] px-3 py-3 text-center">ได้</th>
                     <th class="w-[72px] px-3 py-3 text-center">ไม่ได้</th>
-                    <th class="min-w-[280px] px-3 py-3">หมายเหตุ</th>
+                <th class="min-w-[360px] px-3 py-3">หมายเหตุ</th>
                   </tr>
                 </thead>
                 <tbody id="results-body" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
               </table>
             </div>
-          </section>
-        </div>
+        </section>
       </section>
 
       <section id="report-panel" class="hidden" data-panel="report">
