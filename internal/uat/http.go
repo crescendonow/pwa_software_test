@@ -349,9 +349,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			DateFrom:    strings.TrimSpace(r.URL.Query().Get("date_from")),
 			DateTo:      strings.TrimSpace(r.URL.Query().Get("date_to")),
 		}
-		if info.UID != allSessionsUID {
-			filters.UID = info.UID
-		}
+		filters.UID = visibleSessionUID(info.UID)
 		sessions, err := s.store.ListSessions(r.Context(), filters)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not load sessions")
@@ -369,6 +367,17 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		info, err := s.loadSessionInfo(r)
+		if err != nil || info.UID == "" {
+			writeError(w, http.StatusUnauthorized, "login required")
+			return
+		}
+		input.TesterName = info.UName
+		input.UID = info.UID
+		input.JobName = info.JobName
+		input.Division = info.Division
+		input.Institution = info.Institution
+		input.Position = info.Position
 
 		// A tester may run UAT against several branches in one go: create one
 		// session per selected branch (pwa_code), each with its own results.
@@ -430,7 +439,12 @@ func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := s.store.GetSessionResults(r.Context(), sessionID)
+	info, err := s.loadSessionInfo(r)
+	if err != nil || info.UID == "" {
+		writeError(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	results, err := s.store.GetSessionResults(r.Context(), sessionID, visibleSessionUID(info.UID))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeError(w, http.StatusNotFound, "session not found")
@@ -459,7 +473,12 @@ func (s *Server) handleResultDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.store.UpdateResult(r.Context(), resultID, input)
+	info, err := s.loadSessionInfo(r)
+	if err != nil || info.UID == "" {
+		writeError(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	result, err := s.store.UpdateResult(r.Context(), resultID, input, visibleSessionUID(info.UID))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeError(w, http.StatusNotFound, "result not found")
@@ -472,6 +491,11 @@ func (s *Server) handleResultDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
+	info, err := s.loadSessionInfo(r)
+	if err != nil || info.UID == "" {
+		writeError(w, http.StatusUnauthorized, "login required")
+		return
+	}
 	filters := ReportFilters{
 		Area:        strings.TrimSpace(r.URL.Query().Get("area")),
 		TesterName:  strings.TrimSpace(r.URL.Query().Get("tester_name")),
@@ -479,6 +503,7 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 		TestSuite:   strings.TrimSpace(r.URL.Query().Get("test_suite")),
 		DateFrom:    strings.TrimSpace(r.URL.Query().Get("date_from")),
 		DateTo:      strings.TrimSpace(r.URL.Query().Get("date_to")),
+		UID:         visibleSessionUID(info.UID),
 	}
 	if rawSessionID := strings.TrimSpace(r.URL.Query().Get("session_id")); rawSessionID != "" {
 		sessionID, err := strconv.ParseInt(rawSessionID, 10, 64)
@@ -495,6 +520,13 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
+}
+
+func visibleSessionUID(uid string) string {
+	if uid == allSessionsUID {
+		return ""
+	}
+	return uid
 }
 
 func dashboardFiltersFromQuery(r *http.Request) DashboardFilters {

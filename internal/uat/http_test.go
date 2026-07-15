@@ -13,6 +13,19 @@ import (
 )
 
 func TestCreateSessionEndpointValidatesAndCreatesSession(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"uid":"14180",
+			"uname":"manuay",
+			"job_name":"งานแผนที่",
+			"division":"division",
+			"institution":"institution",
+			"position":"position"
+		}`))
+	}))
+	defer upstream.Close()
+
 	store := &fakeStore{
 		createdSession: Session{
 			ID:          42,
@@ -24,12 +37,14 @@ func TestCreateSessionEndpointValidatesAndCreatesSession(t *testing.T) {
 			TestDate:    "2026-06-30",
 		},
 	}
-	handler := NewHandler(store, fstest.MapFS{"index.html": {Data: []byte("ok")}})
+	handler := NewHandlerWithConfig(store, fstest.MapFS{"index.html": {Data: []byte("ok")}}, HandlerConfig{
+		SessionInfoURL: upstream.URL,
+	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{
 		"test_version": " 22 เมษายน 2569 ",
-		"tester_name": " manuay ",
-		"uid": " 14180 ",
+		"tester_name": " spoofed name ",
+		"uid": " spoofed uid ",
 		"pwa_code": " 1020 ",
 		"area": " 3 ",
 		"job_name": " งานแผนที่ ",
@@ -239,9 +254,54 @@ func TestListSessionsRejectsAuthenticatedSessionWithoutUID(t *testing.T) {
 	}
 }
 
+func TestReportScopesVisibilityByAuthenticatedUID(t *testing.T) {
+	tests := []struct {
+		name        string
+		uid         string
+		expectedUID string
+	}{
+		{name: "regular user sees own report rows", uid: "14180", expectedUID: "14180"},
+		{name: "UID 14744 sees every report row", uid: "14744", expectedUID: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"uid":%q,"uname":"Tester"}`, tt.uid)
+			}))
+			defer upstream.Close()
+
+			store := &fakeStore{}
+			handler := NewHandlerWithConfig(store, fstest.MapFS{"index.html": {Data: []byte("ok")}}, HandlerConfig{
+				SessionInfoURL: upstream.URL,
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/api/report", nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if store.reportFilters.UID != tt.expectedUID {
+				t.Fatalf("expected report UID filter %q, got %q", tt.expectedUID, store.reportFilters.UID)
+			}
+		})
+	}
+}
+
 func TestGetSessionResultsReturnsNotFound(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"uid":"14180","uname":"Tester"}`))
+	}))
+	defer upstream.Close()
+
 	store := &fakeStore{getResultsErr: ErrNotFound}
-	handler := NewHandler(store, fstest.MapFS{"index.html": {Data: []byte("ok")}})
+	handler := NewHandlerWithConfig(store, fstest.MapFS{"index.html": {Data: []byte("ok")}}, HandlerConfig{
+		SessionInfoURL: upstream.URL,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/sessions/99/results", nil)
 	rec := httptest.NewRecorder()
@@ -250,6 +310,9 @@ func TestGetSessionResultsReturnsNotFound(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+	if store.getResultsViewerUID != "14180" {
+		t.Fatalf("expected results to be scoped to UID 14180, got %q", store.getResultsViewerUID)
 	}
 }
 
@@ -431,6 +494,8 @@ type fakeStore struct {
 	listCommentsErr     error
 	listSessionsFilters SessionFilters
 	listSessionsCalls   int
+	getResultsViewerUID string
+	reportFilters       ReportFilters
 }
 
 func (f *fakeStore) Health(ctx context.Context) error {
@@ -459,14 +524,15 @@ func (f *fakeStore) CreateSession(ctx context.Context, input CreateSessionInput)
 
 func (f *fakeStore) DeleteSession(ctx context.Context, sessionID int64, uid string) error { return nil }
 
-func (f *fakeStore) GetSessionResults(ctx context.Context, sessionID int64) (SessionResults, error) {
+func (f *fakeStore) GetSessionResults(ctx context.Context, sessionID int64, viewerUID string) (SessionResults, error) {
+	f.getResultsViewerUID = viewerUID
 	if f.getResultsErr != nil {
 		return SessionResults{}, f.getResultsErr
 	}
 	return SessionResults{}, nil
 }
 
-func (f *fakeStore) UpdateResult(ctx context.Context, resultID int64, input UpdateResultInput) (Result, error) {
+func (f *fakeStore) UpdateResult(ctx context.Context, resultID int64, input UpdateResultInput, viewerUID string) (Result, error) {
 	f.updateCalled = true
 	if resultID <= 0 {
 		return Result{}, errors.New("bad id")
@@ -475,6 +541,7 @@ func (f *fakeStore) UpdateResult(ctx context.Context, resultID int64, input Upda
 }
 
 func (f *fakeStore) Report(ctx context.Context, filters ReportFilters) ([]ReportRow, error) {
+	f.reportFilters = filters
 	return nil, nil
 }
 

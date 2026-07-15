@@ -96,6 +96,7 @@ type ReportFilters struct {
 	DateFrom    string
 	DateTo      string
 	TesterName  string
+	UID         string
 }
 
 type CreateSessionInput struct {

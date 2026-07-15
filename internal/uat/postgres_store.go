@@ -206,8 +206,8 @@ func (p *PostgresStore) CreateSession(ctx context.Context, input CreateSessionIn
 	return session, nil
 }
 
-func (p *PostgresStore) GetSessionResults(ctx context.Context, sessionID int64) (SessionResults, error) {
-	session, err := p.getSession(ctx, sessionID)
+func (p *PostgresStore) GetSessionResults(ctx context.Context, sessionID int64, viewerUID string) (SessionResults, error) {
+	session, err := p.getSession(ctx, sessionID, viewerUID)
 	if err != nil {
 		return SessionResults{}, err
 	}
@@ -267,16 +267,20 @@ func (p *PostgresStore) GetSessionResults(ctx context.Context, sessionID int64) 
 	}, nil
 }
 
-func (p *PostgresStore) UpdateResult(ctx context.Context, resultID int64, input UpdateResultInput) (Result, error) {
+func (p *PostgresStore) UpdateResult(ctx context.Context, resultID int64, input UpdateResultInput, viewerUID string) (Result, error) {
 	var result Result
 	err := p.db.QueryRow(ctx, `
-		UPDATE ut_logs.test_results
+		UPDATE ut_logs.test_results AS result
 		SET is_passed = $2,
 			is_failed = $3,
 			comment = COALESCE($4, '')
-		WHERE id = $1
-		RETURNING id, session_id, test_case_id, is_passed, is_failed, comment, created_at, updated_at
-	`, resultID, input.IsPassed, input.IsFailed, input.Comment).Scan(
+		FROM ut_logs.test_sessions AS session
+		WHERE result.id = $1
+		  AND session.id = result.session_id
+		  AND ($5 = '' OR session.uid = $5)
+		RETURNING result.id, result.session_id, result.test_case_id, result.is_passed, result.is_failed,
+			result.comment, result.created_at, result.updated_at
+	`, resultID, input.IsPassed, input.IsFailed, input.Comment, viewerUID).Scan(
 		&result.ID,
 		&result.SessionID,
 		&result.TestCaseID,
@@ -309,9 +313,10 @@ func (p *PostgresStore) Report(ctx context.Context, filters ReportFilters) ([]Re
 		  AND ($5 = '' OR test_suite = $5)
 		  AND ($6::date IS NULL OR test_date >= $6::date)
 		  AND ($7::date IS NULL OR test_date <= $7::date)
+		  AND ($8 = '' OR uid = $8)
 		ORDER BY test_date DESC, session_id DESC, sort_order, test_case_id
 	`, filters.SessionID, filters.Area, filters.TesterName, filters.TestVersion, filters.TestSuite,
-		nullableDate(filters.DateFrom), nullableDate(filters.DateTo))
+		nullableDate(filters.DateFrom), nullableDate(filters.DateTo), filters.UID)
 	if err != nil {
 		return nil, err
 	}
@@ -361,14 +366,15 @@ func nullableDate(value string) any {
 	return value
 }
 
-func (p *PostgresStore) getSession(ctx context.Context, sessionID int64) (Session, error) {
+func (p *PostgresStore) getSession(ctx context.Context, sessionID int64, viewerUID string) (Session, error) {
 	var session Session
 	err := p.db.QueryRow(ctx, `
 		SELECT id, test_version, tester_name, uid, pwa_code, branch_name, area, job_name, division, institution, position,
 			test_date::text, created_at, updated_at
 		FROM ut_logs.test_sessions
 		WHERE id = $1
-	`, sessionID).Scan(
+		  AND ($2 = '' OR uid = $2)
+	`, sessionID, viewerUID).Scan(
 		&session.ID,
 		&session.TestVersion,
 		&session.TesterName,

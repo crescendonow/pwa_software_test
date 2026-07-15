@@ -15,8 +15,8 @@ type Store interface {
 	ListSessions(ctx context.Context, filters SessionFilters) ([]Session, error)
 	DeleteSession(ctx context.Context, sessionID int64, uid string) error
 	CreateSession(ctx context.Context, input CreateSessionInput) (Session, error)
-	GetSessionResults(ctx context.Context, sessionID int64) (SessionResults, error)
-	UpdateResult(ctx context.Context, resultID int64, input UpdateResultInput) (Result, error)
+	GetSessionResults(ctx context.Context, sessionID int64, viewerUID string) (SessionResults, error)
+	UpdateResult(ctx context.Context, resultID int64, input UpdateResultInput, viewerUID string) (Result, error)
 	Report(ctx context.Context, filters ReportFilters) ([]ReportRow, error)
 	DashboardSummary(ctx context.Context, filters DashboardFilters) (DashboardSummary, error)
 	ListComments(ctx context.Context, filters DashboardFilters) ([]string, error)
