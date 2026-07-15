@@ -13,6 +13,15 @@ INSERT INTO ut_logs.ref_test_action (detail_action)
 VALUES ('กรอกรายละเอียดความต้องการเพิ่มเติมในช่องหมายเหตุ')
 ON CONFLICT (detail_action) DO NOTHING;
 
+-- One row per version in ref_test_version, rather than hard-coded version
+-- names: test_version is FK'd to ref_test_version ON UPDATE CASCADE, so a
+-- version rename silently rewrites test_cases and test_sessions. Hard-coded
+-- names go stale the moment that happens ('5 พฤษภาคม 2569' was renamed to
+-- '6 กรกฎาคม 2569' and no longer exists). Driving off the ref table keeps this
+-- correct across renames and picks up future versions automatically.
+--
+-- sort_order 1130 + tv_id * 10 stays above the seeded range (max 1130), so the
+-- row lands last in every session, and is stable per version across re-runs.
 INSERT INTO ut_logs.test_cases (
     sort_order,
     test_version,
@@ -23,27 +32,16 @@ INSERT INTO ut_logs.test_cases (
     test_action,
     is_active
 )
-VALUES
-    (
-        1140,
-        '22 เมษายน 2569',
-        '',
-        'additional_requirement',
-        'ความต้องการเพิ่มเติมจากผู้ทดสอบ',
-        '',
-        'กรอกรายละเอียดความต้องการเพิ่มเติมในช่องหมายเหตุ',
-        TRUE
-    ),
-    (
-        1150,
-        '5 พฤษภาคม 2569',
-        '5 พ.ค. 69',
-        'additional_requirement',
-        'ความต้องการเพิ่มเติมจากผู้ทดสอบ',
-        '',
-        'กรอกรายละเอียดความต้องการเพิ่มเติมในช่องหมายเหตุ',
-        TRUE
-    )
+SELECT
+    1130 + version.tv_id * 10,
+    version.test_version_name,
+    'ความต้องการเพิ่มเติม',
+    'additional_requirement',
+    'ความต้องการเพิ่มเติมจากผู้ทดสอบ',
+    '',
+    'กรอกรายละเอียดความต้องการเพิ่มเติมในช่องหมายเหตุ',
+    TRUE
+FROM ut_logs.ref_test_version AS version
 ON CONFLICT (sort_order) DO UPDATE SET
     test_version = EXCLUDED.test_version,
     test_suite = EXCLUDED.test_suite,
