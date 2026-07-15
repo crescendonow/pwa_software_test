@@ -127,8 +127,9 @@ func (p *PostgresStore) ListSessions(ctx context.Context, filters SessionFilters
 		  AND ($3 = '' OR test_version = $3)
 		  AND ($4::date IS NULL OR test_date >= $4::date)
 		  AND ($5::date IS NULL OR test_date <= $5::date)
+		  AND ($6 = '' OR uid = $6)
 		ORDER BY test_date DESC, id DESC
-	`, filters.Area, filters.TesterName, filters.TestVersion, nullableDate(filters.DateFrom), nullableDate(filters.DateTo))
+	`, filters.Area, filters.TesterName, filters.TestVersion, nullableDate(filters.DateFrom), nullableDate(filters.DateTo), filters.UID)
 	if err != nil {
 		return nil, err
 	}

@@ -85,6 +85,7 @@ type SessionFilters struct {
 	DateFrom    string
 	DateTo      string
 	TesterName  string
+	UID         string
 }
 
 type ReportFilters struct {

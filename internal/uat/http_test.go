@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -173,6 +174,68 @@ func TestPatchResultEndpointRejectsMutuallyExclusiveOutcome(t *testing.T) {
 	}
 	if store.updateCalled {
 		t.Fatal("store should not be called for mutually exclusive result")
+	}
+}
+
+func TestListSessionsScopesVisibilityByAuthenticatedUID(t *testing.T) {
+	tests := []struct {
+		name        string
+		uid         string
+		expectedUID string
+	}{
+		{name: "regular user sees own sessions", uid: "14180", expectedUID: "14180"},
+		{name: "UID 14744 sees every session", uid: "14744", expectedUID: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"uid":%q,"uname":"Tester"}`, tt.uid)
+			}))
+			defer upstream.Close()
+
+			store := &fakeStore{}
+			handler := NewHandlerWithConfig(store, fstest.MapFS{"index.html": {Data: []byte("ok")}}, HandlerConfig{
+				SessionInfoURL: upstream.URL,
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+			req.Header.Set("Cookie", "session_id=abc")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if store.listSessionsFilters.UID != tt.expectedUID {
+				t.Fatalf("expected UID filter %q, got %q", tt.expectedUID, store.listSessionsFilters.UID)
+			}
+		})
+	}
+}
+
+func TestListSessionsRejectsAuthenticatedSessionWithoutUID(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"uname":"Tester"}`))
+	}))
+	defer upstream.Close()
+
+	store := &fakeStore{}
+	handler := NewHandlerWithConfig(store, fstest.MapFS{"index.html": {Data: []byte("ok")}}, HandlerConfig{
+		SessionInfoURL: upstream.URL,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if store.listSessionsCalls != 0 {
+		t.Fatal("store should not be called when authenticated UID is missing")
 	}
 }
 
@@ -359,13 +422,15 @@ func (unreachableRoundTripper) RoundTrip(*http.Request) (*http.Response, error) 
 }
 
 type fakeStore struct {
-	createdSession  Session
-	createdInput    CreateSessionInput
-	createCalled    bool
-	updateCalled    bool
-	getResultsErr   error
-	comments        []string
-	listCommentsErr error
+	createdSession      Session
+	createdInput        CreateSessionInput
+	createCalled        bool
+	updateCalled        bool
+	getResultsErr       error
+	comments            []string
+	listCommentsErr     error
+	listSessionsFilters SessionFilters
+	listSessionsCalls   int
 }
 
 func (f *fakeStore) Health(ctx context.Context) error {
@@ -381,6 +446,8 @@ func (f *fakeStore) ListTestCases(ctx context.Context, testSuite string) ([]Test
 }
 
 func (f *fakeStore) ListSessions(ctx context.Context, filters SessionFilters) ([]Session, error) {
+	f.listSessionsCalls++
+	f.listSessionsFilters = filters
 	return nil, nil
 }
 

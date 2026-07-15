@@ -37,6 +37,8 @@ type Server struct {
 	httpClient       *http.Client
 }
 
+const allSessionsUID = "14744"
+
 func NewHandler(store Store, staticFS fs.FS) http.Handler {
 	return NewHandlerWithConfig(store, staticFS, HandlerConfig{
 		SessionInfoURL:   os.Getenv("SESSION_INFO_URL"),
@@ -335,12 +337,20 @@ func (s *Server) handleTestCases(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		info, err := s.loadSessionInfo(r)
+		if err != nil || info.UID == "" {
+			writeError(w, http.StatusUnauthorized, "login required")
+			return
+		}
 		filters := SessionFilters{
 			Area:        strings.TrimSpace(r.URL.Query().Get("area")),
 			TesterName:  strings.TrimSpace(r.URL.Query().Get("tester_name")),
 			TestVersion: strings.TrimSpace(r.URL.Query().Get("test_version")),
 			DateFrom:    strings.TrimSpace(r.URL.Query().Get("date_from")),
 			DateTo:      strings.TrimSpace(r.URL.Query().Get("date_to")),
+		}
+		if info.UID != allSessionsUID {
+			filters.UID = info.UID
 		}
 		sessions, err := s.store.ListSessions(r.Context(), filters)
 		if err != nil {
