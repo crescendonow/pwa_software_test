@@ -272,23 +272,29 @@ function renderBranchPicker() {
   const zones = [...byZone.keys()].sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
   els.branchPicker.innerHTML = zones
     .map((zone) => {
-      const offices = byZone.get(zone);
+      const offices = byZone.get(zone).sort((a, b) => a.name.localeCompare(b.name, "th"));
+      const selectedCount = offices.filter((office) => state.selectedBranches.has(office.pwa_code)).length;
       const rows = offices
         .map((office) => {
           const checked = state.selectedBranches.has(office.pwa_code) ? "checked" : "";
           return `
-            <label class="flex items-center gap-2 rounded px-2 py-1 hover:bg-slate-50 dark:hover:bg-slate-800">
-              <input type="checkbox" class="h-4 w-4 rounded border-slate-300" data-branch-checkbox data-pwa-code="${escapeHTML(office.pwa_code)}" data-name="${escapeHTML(office.name)}" data-zone="${escapeHTML(office.zone)}" ${checked} />
-              <span>${escapeHTML(office.name)} <span class="text-xs text-slate-400">(${escapeHTML(office.pwa_code)})</span></span>
+            <label class="branch-option">
+              <input type="checkbox" data-branch-checkbox data-pwa-code="${escapeHTML(office.pwa_code)}" data-name="${escapeHTML(office.name)}" data-zone="${escapeHTML(zone)}" ${checked} />
+              <span class="min-w-0"><span class="branch-option-name">${escapeHTML(office.name)}</span> <span class="branch-option-code">${escapeHTML(office.pwa_code)}</span></span>
             </label>
           `;
         })
         .join("");
       return `
-        <div class="mb-2">
-          <div class="mb-1 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">เขต ${escapeHTML(zone)}</div>
-          <div class="grid gap-0.5 sm:grid-cols-2">${rows}</div>
-        </div>
+        <details class="branch-zone-group" data-branch-zone="${escapeHTML(zone)}" ${selectedCount > 0 ? "open" : ""}>
+          <summary class="branch-zone-summary">
+            <span class="branch-zone-chevron" aria-hidden="true"></span>
+            <span class="branch-zone-name">เขต ${escapeHTML(zone)}</span>
+            <span class="branch-zone-total">${offices.length} สาขา</span>
+            <span class="branch-zone-selected" data-zone-selected-count>${selectedCount > 0 ? `เลือก ${selectedCount}` : ""}</span>
+          </summary>
+          <div class="branch-zone-options">${rows}</div>
+        </details>
       `;
     })
     .join("");
@@ -302,9 +308,21 @@ function renderBranchPicker() {
         state.selectedBranches.delete(pwaCode);
       }
       updateBranchSelectedCount();
+      updateZoneSelectedCounts();
     });
   });
   updateBranchSelectedCount();
+  updateZoneSelectedCounts();
+}
+
+function updateZoneSelectedCounts() {
+  if (!els.branchPicker) return;
+  els.branchPicker.querySelectorAll("[data-branch-zone]").forEach((group) => {
+    const count = group.querySelectorAll("[data-branch-checkbox]:checked").length;
+    const badge = group.querySelector("[data-zone-selected-count]");
+    if (badge) badge.textContent = count > 0 ? `เลือก ${count}` : "";
+    group.classList.toggle("has-selection", count > 0);
+  });
 }
 
 function updateBranchSelectedCount() {
